@@ -1,0 +1,135 @@
+import 'package:drift/drift.dart';
+
+// Enum para controlar el estado de cada fila
+enum SyncStatus {
+  synced,   // Está igual que en el servidor
+  created,  // Nuevo registro local, falta subir (POST)
+  updated,  // Modificado localmente, falta subir (PATCH)
+  deleted   // Borrado localmente, falta avisar al servidor
+}
+
+class Animals extends Table {
+  // Identificadores
+  TextColumn get id => text()(); // UUID generado en el móvil
+  TextColumn get ranchId => text()();
+
+  // Datos del Negocio (Espejo de PostgreSQL)
+  TextColumn get visualTag => text()();
+  TextColumn get name => text().nullable()();
+  TextColumn get lotId => text().nullable()();
+  TextColumn get sex => text()();
+
+  // CAMPOS CRÍTICOS PARA OFFLINE (La magia ocurre aquí)
+  // 1. Estado de sincronización local
+  IntColumn get syncStatus => intEnum<SyncStatus>().withDefault(const Constant(0))(); // 0 = synced? Revisar mapeo
+
+  // 2. Auditoría para resolución de conflictos
+  DateTimeColumn get lastUpdatedLocal => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get serverUpdatedAt => dateTime().nullable()(); // Última vez que el server lo tocó
+
+  // 3. Soft Delete local
+  BoolColumn get isDeletedLocal => boolean().withDefault(const Constant(false))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+// Tabla de cola de eventos (Event Sourcing simple)
+// Opcional: Si prefieres guardar las peticiones HTTP fallidas
+class SyncQueue extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get url => text()();
+  TextColumn get method => text()(); // POST, PUT, DELETE
+  TextColumn get payload => text()(); // JSON body
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+}
+
+// ---------------------------------------------------------
+// 2. REPOSITORY (El puente entre UI y Datos)
+// Tu UI solo habla con esto. No sabe si hay internet o no.
+// ---------------------------------------------------------
+
+abstract class ICattleRepository {
+  Stream<List<Animal>> watchAnimals(String ranchId); // Para la lista en tiempo real
+  Future<void> createAnimal(AnimalCompanion animal);
+  Future<void> updateAnimal(AnimalCompanion animal);
+  Future<void> syncNow(); // Forzar sincronización
+}
+
+class CattleRepository implements ICattleRepository {
+  final AppDatabase localDb; // Drift Database
+  final BovaraApiService api; // Dio Client
+  final ConnectivityService connectivity;
+
+  CattleRepository(this.localDb, this.api, this.connectivity);
+
+  @override
+  Stream<List<Animal>> watchAnimals(String ranchId) {
+    // SIEMPRE devuelve datos locales. La UI es instantánea.
+    return (localDb.select(localDb.animals)
+      ..where((tbl) => tbl.ranchId.equals(ranchId))
+      ..where((tbl) => tbl.isDeletedLocal.equals(false))) // No mostrar borrados pendientes
+        .watch();
+  }
+
+  @override
+  Future<void> createAnimal(AnimalCompanion animal) async {
+    // 1. Guardar LOCALMENTE primero (Optimistic UI)
+    await localDb.into(localDb.animals).insert(
+      animal.copyWith(
+        syncStatus: const Value(SyncStatus.created),
+        lastUpdatedLocal: Value(DateTime.now()),
+      ),
+    );
+
+    // 2. Intentar sincronizar en segundo plano si hay red
+    // No esperamos a la respuesta para liberar la UI
+    _tryBackgroundSync();
+  }
+
+  // ---------------------------------------------------------
+  // 3. LÓGICA DE SINCRONIZACIÓN (El motor)
+  // ---------------------------------------------------------
+
+  Future<void> _tryBackgroundSync() async {
+    if (!await connectivity.hasConnection) return;
+
+    // A. PUSH (Subir cambios locales)
+    final pending = await (localDb.select(localDb.animals)
+      ..where((tbl) => tbl.syncStatus.isNotIn([SyncStatus.synced.index])))
+        .get();
+
+    for (var record in pending) {
+      try {
+        if (record.syncStatus == SyncStatus.created) {
+          // POST al backend
+          await api.post('/animals', data: record.toJson());
+        } else if (record.syncStatus == SyncStatus.updated) {
+          // PATCH al backend
+          await api.patch('/animals/${record.id}', data: record.toJson());
+        }
+
+        // Si éxito: Marcar como synced
+        await (localDb.update(localDb.animals)..where((t) => t.id.equals(record.id)))
+            .write(AnimalsCompanion(syncStatus: Value(SyncStatus.synced)));
+
+      } catch (e) {
+        // Si falla, se queda en estado 'created'/'updated' para el próximo intento
+        print('Sync error for ${record.id}: $e');
+      }
+    }
+
+    // B. PULL (Bajar novedades del servidor)
+    // Pedimos todo lo que cambió desde mi última sync exitosa
+    final lastSync = await prefs.getLastSyncTimestamp();
+    final response = await api.get('/sync/pull?since=$lastSync');
+
+    await localDb.batch((batch) {
+      for (var serverData in response.data['changes']) {
+        // InsertOnConflictUpdate: Si existe lo actualiza, si no lo crea.
+        // Aquí es donde PostgreSQL manda la "verdad absoluta"
+        batch.insertAll(localDb.animals, [serverData], mode: InsertMode.insertOrReplace);
+      }
+    });
+  }
+}
