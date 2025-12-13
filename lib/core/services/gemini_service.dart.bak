@@ -1,0 +1,134 @@
+import 'package:google_generative_ai/google_generative_ai.dart';
+import '../config/api_config.dart';
+
+class GeminiService {
+  late final GenerativeModel _model;
+  late ChatSession _chat;
+  final List<Content> _history = [];
+  bool _isInitialized = false;
+
+  GeminiService() {
+    try {
+      _initializeModel();
+      _isInitialized = true;
+    } catch (e) {
+      _isInitialized = false;
+      rethrow;
+    }
+  }
+
+  void _initializeModel() {
+    _model = GenerativeModel(
+      model: 'gemini-pro',
+      apiKey: ApiConfig.apiKey,
+      // ← QUITADO: systemInstruction (no compatible con v1beta)
+      generationConfig: GenerationConfig(
+        temperature: 0.9,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      ),
+    );
+
+    // ← NUEVO: Agregar contexto como primer mensaje del historial
+    _history.add(
+      Content.model([
+        TextPart(
+          '🐄 Soy Bovara Assistant, un experto asistente de IA especializado en ganadería. '
+              'Ayudo a ganaderos con análisis de producción, calendarios de vacunación, '
+              'registro de pesajes, recomendaciones de manejo, alertas sanitarias, '
+              'nutrición y reproducción. Respondo de forma clara, concisa y práctica.',
+        ),
+      ]),
+    );
+
+    _chat = _model.startChat(history: _history);
+  }
+
+  Future<GeminiResponse> sendMessage(String message) async {
+    if (!_isInitialized) {
+      return GeminiResponse(
+        text: 'Error: El asistente no está inicializado correctamente. '
+            'Verifica tu API key de Gemini.',
+        success: false,
+        error: 'Service not initialized',
+      );
+    }
+
+    try {
+      final response = await _chat.sendMessage(Content.text(message));
+      final text = response.text ?? 'No pude generar una respuesta.';
+
+      return GeminiResponse(
+        text: text,
+        success: true,
+      );
+    } on GenerativeAIException catch (e) {
+      String errorMessage;
+
+      if (e.message.contains('API_KEY_INVALID') || e.message.contains('API key not valid')) {
+        errorMessage = '🔑 API Key inválida\n\n'
+            'Por favor configura una API key válida en:\n'
+            'lib/src/core/config/api_config.dart\n\n'
+            'Obtén tu key en:\n'
+            'https://aistudio.google.com/app/apikey';
+      } else if (e.message.contains('quota')) {
+        errorMessage = '⚠️ Cuota excedida\n\n'
+            'Has alcanzado el límite de uso de la API de Gemini.\n'
+            'Espera un momento o verifica tu cuenta.';
+      } else if (e.message.contains('not found') || e.message.contains('not supported')) {
+        errorMessage = '⚠️ Modelo no disponible\n\n'
+            'El modelo solicitado no está disponible.\n'
+            'Intenta con otro modelo o verifica tu configuración.';
+      } else {
+        errorMessage = '❌ Error de Gemini API\n\n${e.message}';
+      }
+
+      return GeminiResponse(
+        text: errorMessage,
+        success: false,
+        error: e.message,
+      );
+    } catch (e) {
+      return GeminiResponse(
+        text: '❌ Error inesperado\n\n$e',
+        success: false,
+        error: e.toString(),
+      );
+    }
+  }
+
+  List<Content> get history => _history;
+
+  void clearHistory() {
+    _history.clear();
+
+    // Volver a agregar el contexto inicial
+    _history.add(
+      Content.model([
+        TextPart(
+          '🐄 Soy Bovara Assistant, un experto asistente de IA especializado en ganadería. '
+              'Ayudo a ganaderos con análisis de producción, calendarios de vacunación, '
+              'registro de pesajes, recomendaciones de manejo, alertas sanitarias, '
+              'nutrición y reproducción. Respondo de forma clara, concisa y práctica.',
+        ),
+      ]),
+    );
+
+    if (_isInitialized) {
+      _chat = _model.startChat(history: _history);
+    }
+  }
+}
+
+class GeminiResponse {
+  final String text;
+  final bool success;
+  final String? error;
+
+  GeminiResponse({
+    required this.text,
+    required this.success,
+    this.error,
+  });
+}
