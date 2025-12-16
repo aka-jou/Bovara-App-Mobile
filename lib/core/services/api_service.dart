@@ -1,10 +1,11 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../config/api_config.dart'; // ✅ AGREGAR
 
 class ApiService {
-  // ✅ PUERTO CORRECTO: 8003 (gateway)
-  static const String baseUrl = 'http://192.168.0.4:8002/api/v1';
+  // ✅ USA LA CONFIG CENTRAL (NO hardcodear)
+  static String get baseUrl => '${ApiConfig.baseUrl}/api/v1';
 
   final _storage = const FlutterSecureStorage();
 
@@ -21,7 +22,6 @@ class ApiService {
     print('💾 Guardando token: ${token.substring(0, 20)}...');
     await _storage.write(key: 'jwt_token', value: token);
 
-    // Verificar que se guardó
     final saved = await _storage.read(key: 'jwt_token');
     if (saved == token) {
       print('✅ Token verificado en storage');
@@ -75,7 +75,7 @@ class ApiService {
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
           },
-          body: body, // Sin jsonEncode
+          body: body,
         );
         print('📥 Login response status: ${response.statusCode}');
         return _handleResponse(response);

@@ -28,6 +28,7 @@ class _CattleListPageState extends State<CattleListPage> {
     _loadCattle();
   }
 
+  // ✅ MÉTODO MEJORADO PARA CARGAR VACAS
   Future<void> _loadCattle() async {
     setState(() {
       isLoading = true;
@@ -41,16 +42,22 @@ class _CattleListPageState extends State<CattleListPage> {
 
     try {
       final cattle = await _cattleService.getCattleList();
-      setState(() {
-        cattleList = cattle;
-        isLoading = false;
-      });
+
+      if (mounted) {
+        setState(() {
+          cattleList = cattle;
+          isLoading = false;
+        });
+        print('✅ ${cattle.length} vacas cargadas exitosamente');
+      }
     } catch (e) {
       print('❌ Error cargando vacas: $e');
-      setState(() {
-        errorMessage = e.toString();
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          errorMessage = e.toString();
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -66,8 +73,10 @@ class _CattleListPageState extends State<CattleListPage> {
     return cattleList.where((cattle) => cattle.lote == selectedLot).toList();
   }
 
+  // ✅ MÉTODO MEJORADO PARA CREAR VACA
   Future<void> _createCattle(CattleModel newCattle) async {
     try {
+      // Mostrar loading
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -76,23 +85,28 @@ class _CattleListPageState extends State<CattleListPage> {
         ),
       );
 
+      // Crear la vaca
       await _cattleService.createCattle(newCattle);
 
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context); // Cerrar loading
 
+      // ✅ RECARGAR LA LISTA
       await _loadCattle();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${newCattle.name} agregada exitosamente'),
+            content: Text('✅ ${newCattle.name} agregada exitosamente'),
             backgroundColor: const Color(0xFF388E3C),
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context); // Cerrar loading
+
+      print('❌ Error creando vaca: $e');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -100,19 +114,24 @@ class _CattleListPageState extends State<CattleListPage> {
             content: Text('Error: ${e.toString()}'),
             backgroundColor: const Color(0xFFEF4444),
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
     }
   }
 
+  // ✅ MOSTRAR FORMULARIO Y RECARGAR AL CERRAR
   void _showAddCattleForm() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => AddCattleForm(
-        onSave: _createCattle,
+        onSave: (newCattle) async {
+          Navigator.pop(context); // Cerrar el modal primero
+          await _createCattle(newCattle); // Luego crear y recargar
+        },
       ),
     );
   }
@@ -159,7 +178,6 @@ class _CattleListPageState extends State<CattleListPage> {
   }
 
   Widget _buildRanchInfoCard() {
-    // ✅ CORREGIDO: Usar ranchName en lugar de profile['ranch']
     final appState = context.watch<AppStateRepository>();
     final ranchName = appState.ranchName ?? 'Mi Rancho';
 
@@ -375,22 +393,34 @@ class _CattleListPageState extends State<CattleListPage> {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: filteredCattle.length,
-      itemBuilder: (context, index) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: _buildCattleCard(filteredCattle[index]),
-        );
-      },
+    // ✅ AGREGADO: RefreshIndicator para Pull-to-Refresh
+    return RefreshIndicator(
+      color: const Color(0xFF2E7D32),
+      onRefresh: _loadCattle,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: filteredCattle.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: _buildCattleCard(filteredCattle[index]),
+          );
+        },
+      ),
     );
   }
 
   Widget _buildCattleCard(CattleModel cattle) {
     return GestureDetector(
-      onTap: () {
-        context.push('/cattle/${cattle.id}', extra: cattle);
+      onTap: () async {
+        // ✅ ESPERAR RESULTADO DEL DETALLE
+        final result = await context.push('/cattle/${cattle.id}', extra: cattle);
+
+        // Si se editó o eliminó, recargar
+        if (result == true && mounted) {
+          _loadCattle();
+        }
       },
       child: Container(
         width: double.infinity,
@@ -441,7 +471,6 @@ class _CattleListPageState extends State<CattleListPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    // ✅ CORREGIDO: withOpacity → withValues
                     color: const Color(0xFF388E3C).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(9999),
                   ),
@@ -525,7 +554,6 @@ class _CattleListPageState extends State<CattleListPage> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            // ✅ CORREGIDO: withOpacity → withValues
             color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, -2),
@@ -541,7 +569,6 @@ class _CattleListPageState extends State<CattleListPage> {
             foregroundColor: Colors.white,
             minimumSize: const Size(double.infinity, 60),
             elevation: 6,
-            // ✅ CORREGIDO: withOpacity → withValues
             shadowColor: Colors.black.withValues(alpha: 0.1),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -571,7 +598,7 @@ class _CattleListPageState extends State<CattleListPage> {
 }
 
 // ============================================
-// FORMULARIO PARA AGREGAR VACA
+// FORMULARIO PARA AGREGAR VACA (SIN CAMBIOS)
 // ============================================
 
 class AddCattleForm extends StatefulWidget {
@@ -634,7 +661,6 @@ class _AddCattleFormState extends State<AddCattleForm> {
       );
 
       widget.onSave(newCattle);
-      Navigator.pop(context);
     }
   }
 

@@ -13,7 +13,8 @@ import '../../features/assistant/presentation/pages/assistant_chat_page.dart';
 import '../../features/notifications/presentation/pages/notifications_page.dart';
 import '../../features/cattle/presentation/pages/cattle_detail_page.dart';
 import '../../features/cattle/presentation/pages/cattle_zeal_page.dart';
-import '../../features/cattle/presentation/pages/cattle_vaccine_page.dart'; // ✅ IMPORT AGREGADO
+import '../../features/cattle/presentation/pages/cattle_vaccine_page.dart';
+import '../../features/cattle/data/models/cattle_model.dart'; //
 
 final appRouter = GoRouter(
   initialLocation: '/welcome',
@@ -63,14 +64,12 @@ final appRouter = GoRouter(
     // ✅ RUTA MODIFICADA: Ahora acepta datos extra
     GoRoute(
       path: '/cattle/:id',
-      name: 'cattle-detail',
       builder: (context, state) {
         final cattleId = state.pathParameters['id']!;
-        // ✅ CORRECCIÓN: Casteo correcto
-        final cattleData = (state.extra as Map<String, dynamic>?) ?? {};
+        final cattle = state.extra as CattleModel?; // ✅ Cambiar tipo
         return CattleDetailPage(
           cattleId: cattleId,
-          cattleData: cattleData,
+          cattle: cattle, // ✅ Ahora coincide el tipo
         );
       },
     ),

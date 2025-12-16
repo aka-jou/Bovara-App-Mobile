@@ -1,15 +1,22 @@
 // lib/features/cattle/presentation/pages/cattle_detail_page.dart
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../data/models/cattle_model.dart';
+import '../../data/models/health_event_model.dart';
+import '../../data/models/heat_event_model.dart';
+import '../../data/services/cattle_service.dart';
+import '../../data/services/health_event_service.dart';
+import '../../data/services/heat_event_service.dart';
 
 class CattleDetailPage extends StatefulWidget {
   final String cattleId;
-  final Map<String, dynamic> cattleData;
+  final CattleModel? cattle; // Recibido desde lista
 
   const CattleDetailPage({
     super.key,
     required this.cattleId,
-    this.cattleData = const {},
+    this.cattle,
   });
 
   @override
@@ -17,47 +24,161 @@ class CattleDetailPage extends StatefulWidget {
 }
 
 class _CattleDetailPageState extends State<CattleDetailPage> {
-  int selectedTab = 0;
+  final CattleService _cattleService = CattleService();
+  final HealthEventService _healthService = HealthEventService();
+  final HeatEventService _heatService = HeatEventService();
 
-  List<Map<String, dynamic>> get eventHistory {
-    return [
-      {
-        'type': 'vaccine',
-        'title': 'Vacuna Triple Bovina',
-        'date': '25/11/2025',
-        'description': 'Aplicación de vacuna contra brucelosis',
-        'icon': Icons.vaccines,
-        'color': const Color(0xFF2E7D32),
-        'bgColor': const Color(0xFFDCFCE7),
-      },
-      {
-        'type': 'birth',
-        'title': 'Parto registrado',
-        'date': widget.cattleData['lastBirth'] ?? '12/01/2025',
-        'description': 'Cría hembra, peso 35 kg',
-        'icon': Icons.child_care,
-        'color': const Color(0xFF7C3AED),
-        'bgColor': const Color(0xFFF3E8FF),
-      },
-      {
+  int selectedTab = 0;
+  bool isLoading = true;
+  String? errorMessage;
+
+  CattleModel? cattle;
+  List<HealthEventModel> healthEvents = [];
+  List<HeatEventModel> heatEvents = [];
+
+  DateTime? lastHeatDate;
+  String clusterLabel = 'Sin clasificar';
+
+  @override
+  void initState() {
+    super.initState();
+    cattle = widget.cattle;
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    try {
+      // 🔄 Cargar datos de la vaca (si no vino de lista)
+      if (cattle == null) {
+        cattle = await _cattleService.getCattleById(widget.cattleId);
+      }
+
+      // 🔄 Cargar eventos de salud
+      healthEvents = await _healthService.getHealthEventsByCattle(widget.cattleId);
+
+      // 🔄 Cargar eventos de celo
+      heatEvents = await _heatService.getHeatEventsByCattle(widget.cattleId);
+
+      // 📊 Calcular último celo
+      if (heatEvents.isNotEmpty) {
+        heatEvents.sort((a, b) => b.heatDate.compareTo(a.heatDate));
+        lastHeatDate = heatEvents.first.heatDate;
+      }
+
+      // 🧬 Calcular cluster de salud
+      _calculateHealthCluster();
+
+      setState(() {
+        isLoading = false;
+      });
+    } catch (e) {
+      print('❌ Error cargando datos: $e');
+      setState(() {
+        errorMessage = e.toString();
+        isLoading = false;
+      });
+    }
+  }
+
+  void _calculateHealthCluster() {
+    if (cattle == null) return;
+
+    final eventos = healthEvents.length + heatEvents.length;
+    final vacunas = healthEvents.where((e) => e.eventType == 'vaccine').length;
+    final tratamientos = healthEvents.where((e) => e.eventType == 'treatment').length;
+    final enfermedades = healthEvents.where((e) => e.eventType == 'illness').length;
+
+    setState(() {
+      clusterLabel = cattle!.getHealthCluster(eventos, vacunas, tratamientos, enfermedades);
+    });
+  }
+
+  // 🆕 Construir lista combinada de eventos (salud + celo)
+  List<Map<String, dynamic>> get combinedEvents {
+    List<Map<String, dynamic>> events = [];
+
+    // Agregar eventos de salud
+    for (var event in healthEvents) {
+      events.add({
+        'type': event.eventType,
+        'title': event.eventTypeSpanish,
+        'date': event.formattedDate,
+        'description': event.medicineName ?? event.diseaseName ?? 'Sin detalles',
+        'icon': _getHealthIcon(event.eventType),
+        'color': _getHealthColor(event.eventType),
+        'bgColor': _getHealthBgColor(event.eventType),
+        'originalDate': event.applicationDate,
+      });
+    }
+
+    // Agregar eventos de celo
+    for (var event in heatEvents) {
+      events.add({
         'type': 'heat',
         'title': 'Celo detectado',
-        'date': '15/10/2025',
-        'description': 'Duración estimada: 18-24 horas',
+        'date': event.formattedHeatDate,
+        'description': event.wasInseminated
+            ? 'Inseminada el ${event.formattedInseminationDate}'
+            : 'Sin inseminar',
         'icon': Icons.favorite,
         'color': const Color(0xFFDC2626),
         'bgColor': const Color(0xFFFEE2E2),
-      },
-      {
-        'type': 'vaccine',
-        'title': 'Desparasitación',
-        'date': '05/09/2025',
-        'description': 'Ivermectina 1%',
-        'icon': Icons.medical_services,
-        'color': const Color(0xFF2E7D32),
-        'bgColor': const Color(0xFFDCFCE7),
-      },
-    ];
+        'originalDate': event.heatDate,
+      });
+    }
+
+    // Ordenar por fecha descendente
+    events.sort((a, b) => (b['originalDate'] as DateTime).compareTo(a['originalDate'] as DateTime));
+
+    return events;
+  }
+
+  IconData _getHealthIcon(String type) {
+    switch (type) {
+      case 'vaccine':
+        return Icons.vaccines;
+      case 'treatment':
+        return Icons.medical_services;
+      case 'checkup':
+        return Icons.monitor_heart;
+      case 'surgery':
+        return Icons.local_hospital;
+      case 'illness':
+        return Icons.sick;
+      default:
+        return Icons.event_note;
+    }
+  }
+
+  Color _getHealthColor(String type) {
+    switch (type) {
+      case 'vaccine':
+        return const Color(0xFF2E7D32);
+      case 'treatment':
+        return const Color(0xFFD97706);
+      case 'illness':
+        return const Color(0xFFDC2626);
+      default:
+        return const Color(0xFF6B7280);
+    }
+  }
+
+  Color _getHealthBgColor(String type) {
+    switch (type) {
+      case 'vaccine':
+        return const Color(0xFFDCFCE7);
+      case 'treatment':
+        return const Color(0xFFFEF3C7);
+      case 'illness':
+        return const Color(0xFFFEE2E2);
+      default:
+        return const Color(0xFFF3F4F6);
+    }
   }
 
   void _showEventOptions() {
@@ -113,7 +234,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   ),
                 ),
                 title: const Text(
-                  'Registrar vacuna',
+                  'Registrar vacuna/tratamiento',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -121,7 +242,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   ),
                 ),
                 subtitle: const Text(
-                  'Añadir registro de vacunación',
+                  'Añadir registro de salud',
                   style: TextStyle(
                     fontSize: 14,
                     color: Color(0xFF6B7280),
@@ -138,17 +259,17 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
+                    color: const Color(0xFFFEE2E2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
-                    Icons.calendar_today,
-                    color: Color(0xFFD97706),
+                    Icons.favorite,
+                    color: Color(0xFFDC2626),
                     size: 24,
                   ),
                 ),
                 title: const Text(
-                  'Calcular celo',
+                  'Registrar celo',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -156,7 +277,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   ),
                 ),
                 subtitle: const Text(
-                  'Estimar próximo periodo de celo',
+                  'Detectar periodo de celo',
                   style: TextStyle(
                     fontSize: 14,
                     color: Color(0xFF6B7280),
@@ -177,27 +298,76 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.cattleData['name'] ?? 'Sin nombre';
-    final lot = widget.cattleData['lot'] ?? 'Sin lote';
-    final age = widget.cattleData['age'] ?? 'No especificada';
-    final weight = widget.cattleData['weight'] ?? 'No registrado';
-    final birthDate = widget.cattleData['birthDate'] ?? 'No especificada';
-    final registrationDate = widget.cattleData['registrationDate'] ?? 'No especificada';
-    final lastBirth = widget.cattleData['lastBirth'] ?? 'Sin registro';
-    final nextVaccine = widget.cattleData['nextVaccine'] ?? 'Sin programar';
+    if (isLoading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF5F5F5),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF388E3C),
+          title: const Text('Cargando...'),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
+        ),
+      );
+    }
+
+    if (errorMessage != null || cattle == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF5F5F5),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF388E3C),
+          title: const Text('Error'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 64, color: Color(0xFFDC2626)),
+                const SizedBox(height: 16),
+                Text(
+                  'Error al cargar los datos',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  errorMessage ?? 'Datos no disponibles',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _loadData,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reintentar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2E7D32),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: Column(
         children: [
-          // ✅ Header CORREGIDO - Título centrado
+          // Header
           Container(
             height: 90,
             decoration: BoxDecoration(
               color: const Color(0xFF388E3C),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 2,
                   offset: const Offset(0, 1),
                 ),
@@ -207,7 +377,6 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
               bottom: false,
               child: Stack(
                 children: [
-                  // Botón atrás a la izquierda
                   Positioned(
                     left: 8,
                     top: 0,
@@ -217,10 +386,9 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                       onPressed: () => context.pop(),
                     ),
                   ),
-                  // Título centrado
                   const Center(
                     child: Text(
-                      'Vaca',
+                      'Detalles de Vaca',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -228,14 +396,13 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                       ),
                     ),
                   ),
-                  // Botón menú a la derecha
                   Positioned(
                     right: 8,
                     top: 0,
                     bottom: 0,
                     child: IconButton(
-                      icon: const Icon(Icons.more_vert, color: Colors.white, size: 24),
-                      onPressed: () {},
+                      icon: const Icon(Icons.refresh, color: Colors.white, size: 24),
+                      onPressed: _loadData,
                     ),
                   ),
                 ],
@@ -243,7 +410,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
             ),
           ),
 
-          // ✅ Contenido ESTÁTICO (no hace scroll)
+          // Contenido
           Expanded(
             child: Column(
               children: [
@@ -251,29 +418,20 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   child: Column(
                     children: [
                       const SizedBox(height: 16),
-                      // Animal Info Card
-                      _buildAnimalInfoCard(name, lot, age, weight),
+                      _buildAnimalInfoCard(),
                       const SizedBox(height: 16),
-                      // Tabs
                       _buildTabs(),
                       const SizedBox(height: 16),
                     ],
                   ),
                 ),
 
-                // ✅ Contenido del tab seleccionado
                 Expanded(
                   child: selectedTab == 0
                       ? SingleChildScrollView(
                     child: Column(
                       children: [
-                        _buildSummaryTab(
-                          birthDate: birthDate,
-                          weight: weight,
-                          lastBirth: lastBirth,
-                          nextVaccine: nextVaccine,
-                          registrationDate: registrationDate,
-                        ),
+                        _buildSummaryTab(),
                         const SizedBox(height: 16),
                       ],
                     ),
@@ -284,14 +442,14 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
             ),
           ),
 
-          // ✅ Botón fijo abajo
+          // Botón fijo
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black.withValues(alpha: 0.1),
                   blurRadius: 8,
                   offset: const Offset(0, -2),
                 ),
@@ -335,7 +493,30 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
     );
   }
 
-  Widget _buildAnimalInfoCard(String name, String lot, String age, String weight) {
+  Widget _buildAnimalInfoCard() {
+    final nextHeatDays = cattle!.daysUntilNextHeat(lastHeatDate);
+    final nextHeatText = cattle!.formattedNextHeat(lastHeatDate);
+
+    // Color del badge de próximo celo
+    Color nextHeatColor = const Color(0xFF6B7280);
+    Color nextHeatBgColor = const Color(0xFFF3F4F6);
+
+    if (nextHeatDays != null) {
+      if (nextHeatDays <= 0) {
+        nextHeatColor = const Color(0xFFDC2626); // Rojo - retrasado/hoy
+        nextHeatBgColor = const Color(0xFFFEE2E2);
+      } else if (nextHeatDays <= 3) {
+        nextHeatColor = const Color(0xFFD97706); // Naranja - próximo
+        nextHeatBgColor = const Color(0xFFFEF3C7);
+      } else {
+        nextHeatColor = const Color(0xFF2E7D32); // Verde - normal
+        nextHeatBgColor = const Color(0xFFDCFCE7);
+      }
+    }
+
+    // Color del cluster de salud
+    final clusterColor = Color(int.parse(cattle!.getClusterColor(clusterLabel).replaceFirst('#', '0xFF')));
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(20),
@@ -344,7 +525,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 2,
             offset: const Offset(0, 1),
           ),
@@ -355,45 +536,97 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF222222),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      cattle!.name,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF222222),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'ID: ${widget.cattleId}',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Color(0xFF6B7280),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Arete: ${cattle!.tag}',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Color(0xFF6B7280),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFDCFCE7),
-                  shape: BoxShape.circle,
+                  ],
                 ),
-                child: const Icon(
-                  Icons.check,
-                  color: Color(0xFF2E7D32),
-                  size: 24,
+              ),
+              const SizedBox(width: 12),
+              // 🆕 Badge de cluster de salud
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: clusterColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(9999),
+                  border: Border.all(color: clusterColor.withValues(alpha: 0.3)),
+                ),
+                child: Text(
+                  clusterLabel,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: clusterColor,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
+
+          // 🆕 Card de próximo celo
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: nextHeatBgColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: nextHeatColor.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.calendar_today, color: nextHeatColor, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Próximo celo',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: nextHeatColor,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        nextHeatText,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: nextHeatColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
           Row(
             children: [
               Expanded(
@@ -417,7 +650,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        lot,
+                        cattle!.lote,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -450,7 +683,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        age,
+                        cattle!.age != null ? '${cattle!.age} años' : 'No registrada',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -493,7 +726,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      weight,
+                      cattle!.weight != null ? '${cattle!.weight} kg' : 'No registrado',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -518,7 +751,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 2,
             offset: const Offset(0, 1),
           ),
@@ -572,7 +805,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                       : null,
                 ),
                 child: Text(
-                  'Historial',
+                  'Historial (${combinedEvents.length})',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -589,13 +822,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
     );
   }
 
-  Widget _buildSummaryTab({
-    required String birthDate,
-    required String weight,
-    required String lastBirth,
-    required String nextVaccine,
-    required String registrationDate,
-  }) {
+  Widget _buildSummaryTab() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(20),
@@ -604,7 +831,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 2,
             offset: const Offset(0, 1),
           ),
@@ -622,29 +849,26 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildInfoRow('Fecha de registro', registrationDate),
+          _buildInfoRow('Raza', cattle!.breed),
           const Divider(height: 1, color: Color(0xFFF3F4F6)),
-          _buildInfoRow('Fecha de nacimiento', birthDate),
+          _buildInfoRow('Género', cattle!.gender == 'female' ? 'Hembra' : 'Macho'),
           const Divider(height: 1, color: Color(0xFFF3F4F6)),
-          _buildInfoRow('Peso actual', weight),
+          _buildInfoRow('Fecha de nacimiento', cattle!.formattedBirthDate),
           const Divider(height: 1, color: Color(0xFFF3F4F6)),
-          _buildInfoRow('Último parto', lastBirth),
-          const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          _buildInfoRow(
-            'Próxima vacuna',
-            nextVaccine,
-            valueColor: nextVaccine.contains('Sin')
-                ? const Color(0xFF6B7280)
-                : const Color(0xFFD97706),
-          ),
+          _buildInfoRow('Peso actual', cattle!.weight != null ? '${cattle!.weight} kg' : 'No registrado'),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          _buildInfoRow('Último parto', cattle!.formattedLastBirth),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          _buildInfoRow('Eventos de salud', '${healthEvents.length}'),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          _buildInfoRow('Eventos de celo', '${heatEvents.length}'),
         ],
       ),
     );
   }
 
-  // ✅ HISTORIAL CON SCROLL SOLO EN LA LISTA
   Widget _buildHistoryTabWithScroll() {
-    if (eventHistory.isEmpty) {
+    if (combinedEvents.isEmpty) {
       return Center(
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -654,7 +878,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 2,
                 offset: const Offset(0, 1),
               ),
@@ -677,6 +901,14 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
                   color: Colors.grey[600],
                 ),
               ),
+              const SizedBox(height: 8),
+              Text(
+                'Agrega vacunas y eventos de celo',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[500],
+                ),
+              ),
             ],
           ),
         ),
@@ -690,7 +922,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 2,
             offset: const Offset(0, 1),
           ),
@@ -699,7 +931,6 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Título ESTÁTICO
           const Padding(
             padding: EdgeInsets.all(20),
             child: Text(
@@ -711,13 +942,12 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
               ),
             ),
           ),
-          // Lista CON SCROLL
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              itemCount: eventHistory.length,
+              itemCount: combinedEvents.length,
               itemBuilder: (context, index) {
-                return _buildHistoryItem(eventHistory[index]);
+                return _buildHistoryItem(combinedEvents[index]);
               },
             ),
           ),
@@ -795,7 +1025,7 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
 
   Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [

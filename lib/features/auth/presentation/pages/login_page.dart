@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ← NUEVO import
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/application/app_state_repository.dart';
 import '../../../../core/services/connectivity_service.dart';
 import '../../data/services/auth_service.dart';
@@ -50,6 +50,7 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
+  // ✅ MÉTODO CORREGIDO
   Future<void> _onLoginPressed() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -71,22 +72,43 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text,
       );
 
+      print('✅ Login exitoso: ${response.user.email}');
+      print('👤 Nombre: ${response.user.fullName}');
+      print('📧 Email: ${response.user.email}');
+      print('📱 Phone: ${response.user.phone}');
+      print('🏠 Ranch: ${response.user.ranch}');
+      print('👔 Role: ${response.user.role}');
+
       if (mounted) {
-        context.read<AppStateRepository>().setLoggedIn(
+        final appState = context.read<AppStateRepository>();
+
+        // ✅ GUARDAR DATOS (sin ?? porque updateProfile maneja nulls)
+        appState.updateProfile(
+          name: response.user.fullName,
+          email: response.user.email,
+          phone: response.user.phone,
+          ranch: response.user.ranch,
+          role: response.user.role,
+        );
+
+        appState.setLoggedIn(
           true,
           email: response.user.email,
         );
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('¡Bienvenido ${response.user.fullName}!'),
+            content: Text('¡Bienvenido ${response.user.fullName ?? "Usuario"}!'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
           ),
         );
 
         context.go('/home');
       }
     } catch (e) {
+      print('❌ Error en login: $e');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -104,6 +126,8 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +168,6 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          // ← NUEVO: Logo con ícono de vaca de FontAwesome
                           Align(
                             alignment: Alignment.center,
                             child: Container(

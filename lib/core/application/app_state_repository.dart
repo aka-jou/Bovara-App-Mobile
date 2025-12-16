@@ -11,21 +11,31 @@ class AppStateRepository extends ChangeNotifier {
   String? _userPhone;
   String? _userEmail;
 
+
   // Getters
   bool get isLoggedIn => _isLoggedIn;
+
   String? get currentUserEmail => _currentUserEmail;
 
   String? get userName => _userName;
+
   String? get userRole => _userRole;
+
   String? get ranchName => _ranchName;
+
   String? get userPhone => _userPhone;
+
   String? get userEmail => _userEmail;
 
   // Nombre calculado para mostrar en el dashboard
   String get displayName =>
       _userName ??
-          _userEmail?.split('@').first ??
-          _currentUserEmail?.split('@').first ??
+          _userEmail
+              ?.split('@')
+              .first ??
+          _currentUserEmail
+              ?.split('@')
+              .first ??
           'Ganadero';
 
   // Login / logout
@@ -39,6 +49,7 @@ class AppStateRepository extends ChangeNotifier {
   }
 
   // Actualizar datos de perfil
+  // Actualizar datos de perfil
   void updateProfile({
     String? name,
     String? role,
@@ -46,10 +57,14 @@ class AppStateRepository extends ChangeNotifier {
     String? phone,
     String? email,
   }) {
+    // ✅ CAMBIAR: Solo validar isNotEmpty si no es null
     if (name != null && name.isNotEmpty) _userName = name;
     if (role != null && role.isNotEmpty) _userRole = role;
     if (ranch != null && ranch.isNotEmpty) _ranchName = ranch;
-    if (phone != null && phone.isNotEmpty) _userPhone = phone;
+
+    // ✅ SOLUCIÓN: Permitir null sin validar isEmpty
+    _userPhone = phone; // Acepta null directamente
+
     if (email != null && email.isNotEmpty) {
       _userEmail = email;
       _currentUserEmail = email;

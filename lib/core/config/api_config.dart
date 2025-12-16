@@ -1,23 +1,27 @@
 class ApiConfig {
-  static const String _baseUrlAndroidEmulator = 'http://10.0.2.2:8000';
-  static const String _baseUrlPhysicalDevice = 'http://192.168.0.4:8000';
-  static const String _baseUrlIOSSimulator = 'http://localhost:8000';
+  // 🔧 IP actualizada
+  static const String _baseIp = '10.14.0.41ff'; // ✅ NUEVA IP
 
-  // ← AUTH SERVICE (puerto 8000)
-  static const String baseUrl = _baseUrlPhysicalDevice;
+  // ✅ UN SOLO ENDPOINT: El API Gateway (puerto 8002)
+  static const String baseUrl = 'http://$_baseIp:8002';
 
-  // ← CORE SERVICE (puerto 8001) - NUEVO
-  static const String coreBaseUrl = 'http://192.168.0.4:8001';
+  // ============================================
+  // Endpoints (todos pasan por el gateway)
+  // ============================================
 
-  // Auth endpoints
+  // Auth
   static const String registerEndpoint = '/api/v1/auth/register';
   static const String loginEndpoint = '/api/v1/auth/login';
   static const String meEndpoint = '/api/v1/auth/me';
   static const String logoutEndpoint = '/api/v1/auth/logout';
 
-  // Core endpoints - NUEVO
+  // Core (Cattle, Ranches)
   static const String ranchesEndpoint = '/api/v1/ranches/';
-  static const String cattleEndpoint = '/api/v1/cattle/';
+  static const String cattleEndpoint = '/api/v1/cattle';
+
+  // Chatbot
+  static const String chatEndpoint = '/api/v1/chat/';
+  static const String chatHealthEndpoint = '/api/v1/chat/health';
 
   static const String apiKey = '';
 }

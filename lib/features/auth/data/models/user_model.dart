@@ -1,3 +1,5 @@
+// lib/features/auth/data/models/user_model.dart
+
 class User {
   final String id;
   final String email;
@@ -5,6 +7,9 @@ class User {
   final bool isActive;
   final bool isSuperuser;
   final DateTime? createdAt;
+  final String? phone;
+  final String? ranch;
+  final String? role;
 
   User({
     required this.id,
@@ -13,6 +18,9 @@ class User {
     required this.isActive,
     required this.isSuperuser,
     this.createdAt,
+    this.phone,
+    this.ranch,
+    this.role,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -25,6 +33,9 @@ class User {
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : null,
+      phone: json['phone'],
+      ranch: json['ranch'],
+      role: json['role'],
     );
   }
 
@@ -35,7 +46,10 @@ class User {
       'full_name': fullName,
       'is_active': isActive,
       'is_superuser': isSuperuser,
-      'created_at': createdAt?.toIso8601String(),
+      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
+      if (phone != null) 'phone': phone,
+      if (ranch != null) 'ranch': ranch,
+      if (role != null) 'role': role,
     };
   }
 }

@@ -121,4 +121,9 @@ class AuthService {
   Future<bool> isLoggedIn() async {
     return await _tokenStorage.hasToken();
   }
+
+  // Obtener token
+  Future<String?> getToken() async {
+    return await _tokenStorage.getToken();
+  }
 }

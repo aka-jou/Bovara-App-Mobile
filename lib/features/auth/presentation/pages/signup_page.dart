@@ -132,7 +132,7 @@ class _SignUpPageState extends State<SignUpPage> {
       );
 
       // Navegar a cattle-list
-      context.go('/cattle-list');
+      context.go('/home');
 
     } catch (e) {
       print('❌ Error en registro: $e');

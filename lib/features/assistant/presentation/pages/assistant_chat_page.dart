@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:permission_handler/permission_handler.dart';
-import '../../../../core/services/gemini_service.dart.bak';
+import '../../data/services/assistant_service.dart'; // ✅ AGREGAR
 
 class AssistantChatPage extends StatefulWidget {
   const AssistantChatPage({super.key});
@@ -24,11 +24,10 @@ class _AssistantChatPageState extends State<AssistantChatPage>
   late stt.SpeechToText _speechToText;
   bool _isListening = false;
   bool _speechEnabled = false;
-  bool _canCancelRecording = false;
   String _lastWords = '';
 
-  // Gemini
-  late GeminiService _geminiService;
+  // ✅ AGREGAR: Servicio del asistente
+  final _assistantService = AssistantService();
 
   // Animaciones
   late AnimationController _pulseController;
@@ -41,9 +40,9 @@ class _AssistantChatPageState extends State<AssistantChatPage>
   void initState() {
     super.initState();
     _initSpeech();
-    _initGemini();
     _initAnimations();
     _addWelcomeMessage();
+    _checkConnection(); // ✅ AGREGAR
   }
 
   void _initAnimations() {
@@ -67,21 +66,20 @@ class _AssistantChatPageState extends State<AssistantChatPage>
     );
   }
 
-  void _initGemini() {
-    try {
-      _geminiService = GeminiService();
-    } catch (e) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al inicializar Gemini: $e'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 5),
-            ),
-          );
-        }
-      });
+  // ✅ AGREGAR: Verificar conexión al iniciar
+  Future<void> _checkConnection() async {
+    final isConnected = await _assistantService.checkHealth();
+
+    if (!isConnected && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ No se pudo conectar con el asistente. Verifica que el servicio esté activo.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    } else if (mounted) {
+      print('✅ Conexión con el asistente establecida');
     }
   }
 
@@ -91,13 +89,16 @@ class _AssistantChatPageState extends State<AssistantChatPage>
 
     _messages.add(
       ChatMessage(
-        text: '¡Hola! Soy el Asistente Bovara \n\n'
+        text: '¡Hola! Soy el Asistente Bovara 🐄\n\n'
             'Puedo ayudarte con:\n'
-            '• Análisis de producción \n'
-            '• Calendarios de vacunación \n'
-            '• Registro de pesajes ️\n'
-            '• Recomendaciones de manejo \n'
-            '• Y mucho más\n\n'
+            '• Consultas sobre tu ganado 🐮\n'
+            '• Recordatorios de vacunación 💉\n'
+            '• Información de salud 🏥\n'
+            '• Eventos de celo 💕\n\n'
+            'Pregúntame lo que necesites, por ejemplo:\n'
+            '• "¿Cuántas vacas tengo?"\n'
+            '• "¿Cuándo le toca vacuna a la vaca 504?"\n'
+            '• "Muéstrame mi ganado"\n\n'
             '¿En qué puedo ayudarte hoy?',
         isUser: false,
         timestamp: ts,
@@ -292,7 +293,6 @@ class _AssistantChatPageState extends State<AssistantChatPage>
               Navigator.of(ctx).pop();
               setState(() {
                 _messages.clear();
-                _geminiService.clearHistory();
                 _addWelcomeMessage();
               });
             },
@@ -467,9 +467,7 @@ class _AssistantChatPageState extends State<AssistantChatPage>
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF4285F4), Color(0xFF34A853)],
-                            ),
+                            color: const Color(0xFF2E7D32),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
@@ -478,7 +476,7 @@ class _AssistantChatPageState extends State<AssistantChatPage>
                               Icon(Icons.auto_awesome, color: Colors.white, size: 12),
                               SizedBox(width: 4),
                               Text(
-                                'Gemini',
+                                'Bovara AI',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
@@ -530,7 +528,7 @@ class _AssistantChatPageState extends State<AssistantChatPage>
                 const SizedBox(width: 12),
                 RotationTransition(
                   turns: _thinkingAnimation,
-                  child: const Icon(Icons.auto_awesome, color: Color(0xFF4285F4), size: 16),
+                  child: const Icon(Icons.auto_awesome, color: Color(0xFF2E7D32), size: 16),
                 ),
               ],
             ),
@@ -556,12 +554,7 @@ class _AssistantChatPageState extends State<AssistantChatPage>
               width: 10,
               height: 10,
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFF4285F4).withOpacity(opacity),
-                    const Color(0xFF34A853).withOpacity(opacity),
-                  ],
-                ),
+                color: const Color(0xFF2E7D32).withOpacity(opacity),
                 shape: BoxShape.circle,
               ),
             ),
@@ -731,6 +724,7 @@ class _AssistantChatPageState extends State<AssistantChatPage>
     }
   }
 
+  // ✅ MÉTODO CONECTADO AL MICROSERVICIO
   void _handleSend({bool isVoice = false}) async {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
@@ -754,8 +748,9 @@ class _AssistantChatPageState extends State<AssistantChatPage>
     _scrollToBottom();
     setState(() => _assistantTyping = true);
 
+    // ✅ CONECTADO AL MICROSERVICIO
     try {
-      final response = await _geminiService.sendMessage(text);
+      final response = await _assistantService.sendMessage(text);
 
       if (mounted) {
         setState(() {
@@ -763,26 +758,35 @@ class _AssistantChatPageState extends State<AssistantChatPage>
           _assistantTyping = false;
           _messages.add(
             ChatMessage(
-              text: response.text,
+              text: response.fullText,
+              isUser: false,
+              timestamp: ts,
+            ),
+          );
+        });
+        _scrollToBottom();
+      }
+    } catch (e) {
+      print('❌ Error al enviar mensaje: $e');
+
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _assistantTyping = false;
+          _messages.add(
+            ChatMessage(
+              text: 'Lo siento, hubo un error al conectar con el asistente. Verifica tu conexión e intenta de nuevo.',
               isUser: false,
               timestamp: ts,
             ),
           );
         });
 
-        _scrollToBottom();
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _sending = false;
-          _assistantTyping = false;
-        });
-
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('Error: ${e.toString()}'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
