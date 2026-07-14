@@ -1,0 +1,115 @@
+diff --git a/.gitignore b/.gitignore
+index 5262bfa..972830d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -53,5 +53,10 @@ app.*.map.json
+
+ # ---------------- Secrets / claves (por si acaso) ----------------
+ .env
++.env.*
+ *.keystore
+ *.jks
++remote_backup.txt
++*_backup.txt
++*.pat
++*token*.txt
+diff --git a/lib/core/config/api_config.dart b/lib/core/config/api_config.dart
+index 6533da7..861dbc3 100644
+--- a/lib/core/config/api_config.dart
++++ b/lib/core/config/api_config.dart
+@@ -1,6 +1,8 @@
+ class ApiConfig {
+-  // 🔧 IP actualizada
+-  static const String _baseIp = '10.14.0.41ff'; // ✅ NUEVA IP
++  // 🔧 IP de tu máquina en la red local (donde corre el api-gateway)
++  // Emulador Android: usa '10.0.2.2'
++  // Dispositivo físico: usa la IP LAN de tu PC (ej. 192.168.x.x)
++  static const String _baseIp = '10.14.0.41';
+
+   // ✅ UN SOLO ENDPOINT: El API Gateway (puerto 8002)
+   static const String baseUrl = 'http://$_baseIp:8002';
+diff --git a/lib/core/services/token_storage.dart b/lib/core/services/token_storage.dart
+index e6bdd82..506438f 100644
+--- a/lib/core/services/token_storage.dart
++++ b/lib/core/services/token_storage.dart
+@@ -1,18 +1,27 @@
++import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+ import 'package:shared_preferences/shared_preferences.dart';
+
++/// ⚠️ IMPORTANTE: usa la MISMA storage y la MISMA key ('jwt_token') que
++/// core/services/api_service.dart. Antes este archivo usaba SharedPreferences
++/// con la key 'access_token', mientras que ApiService (usado por
++/// CattleService, HealthEventService, etc.) usaba FlutterSecureStorage con
++/// la key 'jwt_token'. Resultado: el token guardado al hacer login nunca
++/// era visto por los servicios de ganado. Ahora todo el flujo de auth
++/// converge a un único storage.
+ class TokenStorage {
+-  static const String _tokenKey = 'access_token';
++  static const _storage = FlutterSecureStorage();
++  static const String _tokenKey = 'jwt_token';
++
++  // Datos de usuario complementarios (no sensibles) siguen en SharedPreferences
+   static const String _userIdKey = 'user_id';
+   static const String _userEmailKey = 'user_email';
+
+   Future<void> saveToken(String token) async {
+-    final prefs = await SharedPreferences.getInstance();
+-    await prefs.setString(_tokenKey, token);
++    await _storage.write(key: _tokenKey, value: token);
+   }
+
+   Future<String?> getToken() async {
+-    final prefs = await SharedPreferences.getInstance();
+-    return prefs.getString(_tokenKey);
++    return await _storage.read(key: _tokenKey);
+   }
+
+   Future<void> saveUserData(String userId, String email) async {
+@@ -27,6 +36,7 @@ class TokenStorage {
+   }
+
+   Future<void> clearAll() async {
++    await _storage.delete(key: _tokenKey);
+     final prefs = await SharedPreferences.getInstance();
+     await prefs.clear();
+   }
+diff --git a/lib/features/cattle/data/services/cattle_service.dart b/lib/features/cattle/data/services/cattle_service.dart
+index e08a384..3c85a93 100644
+--- a/lib/features/cattle/data/services/cattle_service.dart
++++ b/lib/features/cattle/data/services/cattle_service.dart
+@@ -45,7 +45,7 @@ class CattleService {
+   // ✅ Obtener una vaca por ID
+   Future<CattleModel> getCattleById(String id) async {
+     try {
+-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
++      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
+       print('🐄 Obteniendo vaca: $url');
+
+       final response = await http.get(url, headers: await _getHeaders());
+@@ -91,7 +91,7 @@ class CattleService {
+   // ✅ Actualizar vaca
+   Future<CattleModel> updateCattle(String id, Map<String, dynamic> data) async {
+     try {
+-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
++      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
+       print('🐄 Actualizando vaca: $url');
+
+       final response = await http.put(
+@@ -116,7 +116,7 @@ class CattleService {
+   // ✅ Eliminar vaca
+   Future<void> deleteCattle(String id) async {
+     try {
+-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
++      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
+       print('🐄 Eliminando vaca: $url');
+
+       final response = await http.delete(url, headers: await _getHeaders());
+@@ -137,7 +137,7 @@ class CattleService {
+   // ✅ Buscar por lote
+   Future<List<CattleModel>> searchByLote(String lote) async {
+     try {
+-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}search?lote=$lote');
++      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/search?query=$lote');
+       print('🐄 Buscando por lote: $url');
+
+       final response = await http.get(url, headers: await _getHeaders());

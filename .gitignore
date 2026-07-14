@@ -53,5 +53,10 @@ app.*.map.json
 
 # ---------------- Secrets / claves (por si acaso) ----------------
 .env
+.env.*
 *.keystore
 *.jks
+remote_backup.txt
+*_backup.txt
+*.pat
+*token*.txt

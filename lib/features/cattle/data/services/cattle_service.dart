@@ -45,7 +45,7 @@ class CattleService {
   // ✅ Obtener una vaca por ID
   Future<CattleModel> getCattleById(String id) async {
     try {
-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
+      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
       print('🐄 Obteniendo vaca: $url');
 
       final response = await http.get(url, headers: await _getHeaders());
@@ -91,7 +91,7 @@ class CattleService {
   // ✅ Actualizar vaca
   Future<CattleModel> updateCattle(String id, Map<String, dynamic> data) async {
     try {
-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
+      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
       print('🐄 Actualizando vaca: $url');
 
       final response = await http.put(
@@ -116,7 +116,7 @@ class CattleService {
   // ✅ Eliminar vaca
   Future<void> deleteCattle(String id) async {
     try {
-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}$id');
+      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/$id');
       print('🐄 Eliminando vaca: $url');
 
       final response = await http.delete(url, headers: await _getHeaders());
@@ -137,7 +137,7 @@ class CattleService {
   // ✅ Buscar por lote
   Future<List<CattleModel>> searchByLote(String lote) async {
     try {
-      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}search?lote=$lote');
+      final url = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.cattleEndpoint}/search?query=$lote');
       print('🐄 Buscando por lote: $url');
 
       final response = await http.get(url, headers: await _getHeaders());

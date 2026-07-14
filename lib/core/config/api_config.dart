@@ -1,6 +1,8 @@
 class ApiConfig {
-  // 🔧 IP actualizada
-  static const String _baseIp = '10.14.0.41ff'; // ✅ NUEVA IP
+  // 🔧 IP de tu máquina en la red local (donde corre el api-gateway)
+  // Emulador Android: usa '10.0.2.2'
+  // Dispositivo físico: usa la IP LAN de tu PC (ej. 192.168.x.x)
+  static const String _baseIp = '10.14.0.41';
 
   // ✅ UN SOLO ENDPOINT: El API Gateway (puerto 8002)
   static const String baseUrl = 'http://$_baseIp:8002';
