@@ -1,0 +1,2830 @@
+diff --git a/lib/features/notifications/presentation/pages/notifications_page.dart b/lib/features/notifications/presentation/pages/notifications_page.dart
+index d36b743..b48bc4e 100644
+--- a/lib/features/notifications/presentation/pages/notifications_page.dart
++++ b/lib/features/notifications/presentation/pages/notifications_page.dart
+@@ -1,6 +1,26 @@
++// lib/features/notifications/presentation/pages/notifications_page.dart
++//
++// Notificaciones (Grupo G · Notificaciones del rediseño).
++//
++// NOTA: Este grupo también contenía "Calidad de datos" en el prototipo,
++// pero el usuario pidió omitirlo, así que solo se implementa el listado.
++//
++// Estructura:
++//   - Header: botón atrás + título "Notificaciones" + "N sin leer" +
++//     acción "Marcar leídas".
++//   - Sección "Hoy" con cards ricas: icono coloreado, título, cuerpo,
++//     botones de acción secundarios (solo en algunas), timestamp, dot
++//     azul si es no leída.
++//   - Sección "Ayer" con cards atenuadas (opacity 0.75).
++//
++// LÓGICA: por ahora los items son mock hasta que el backend exponga un
++// servicio de notificaciones/eventos unificado. La estructura del widget
++// está lista para consumir una futura lista de `NotificationModel`.
++
+ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
+ 
++import '../../../../core/theme/theme.dart';
+ 
+ class NotificationsPage extends StatefulWidget {
+   const NotificationsPage({super.key});
+@@ -10,122 +30,103 @@ class NotificationsPage extends StatefulWidget {
+ }
+ 
+ class _NotificationsPageState extends State<NotificationsPage> {
+-  int selectedTabIndex = 0;
++  // Mock hasta que exista un endpoint de notificaciones.
++  late List<_NotifItem> _todayItems;
++  late List<_NotifItem> _yesterdayItems;
++
++  @override
++  void initState() {
++    super.initState();
++    _todayItems = [
++      _NotifItem(
++        icon: Icons.favorite_rounded,
++        iconBg: BovaraColors.celoSoftBg,
++        iconFg: BovaraColors.celo,
++        title: 'Bovi detectó posible celo',
++        body: 'Vaca #405 · confianza 94%. Ventana de inseminación: próximas 12 h.',
++        timestamp: 'Hace 20 min',
++        unread: true,
++        actions: [
++          _NotifAction(label: 'Ver animal', route: '/cattle', primary: true),
++          _NotifAction(label: 'Recordar en 2 h', route: null, primary: false),
++        ],
++      ),
++      _NotifItem(
++        icon: Icons.medical_services_outlined,
++        iconBg: BovaraColors.warningSoftBg,
++        iconFg: BovaraColors.warning,
++        title: 'Recordatorio: vacunar Lote C',
++        body: 'Mañana 8:00 AM · 15 animales · antiaftosa.',
++        timestamp: 'Hace 3 h',
++        unread: true,
++      ),
++    ];
++
++    _yesterdayItems = [
++      _NotifItem(
++        icon: Icons.check_rounded,
++        iconBg: BovaraColors.primarySoftBg,
++        iconFg: BovaraColors.primary,
++        title: 'Sincronización completa',
++        body: '12 registros subidos correctamente a la nube.',
++        timestamp: 'Ayer · 9:14 PM',
++        unread: false,
++      ),
++      _NotifItem(
++        icon: Icons.bar_chart_rounded,
++        iconBg: BovaraColors.infoSoftBg,
++        iconFg: BovaraColors.info,
++        title: 'Reporte semanal listo',
++        body: 'Ganancia de peso promedio: +2.1 kg. 5 celos detectados.',
++        timestamp: 'Ayer · 7:00 AM',
++        unread: false,
++      ),
++    ];
++  }
+ 
+-  final List<String> tabs = [
+-    'Todos',
+-    'Recordatorios',
+-    'Alertas de datos',
+-    'Sistema',
+-  ];
++  int get _unreadCount => _todayItems.where((n) => n.unread).length +
++      _yesterdayItems.where((n) => n.unread).length;
+ 
+-  final List<NotificationItem> notifications = [
+-    NotificationItem(
+-      type: NotificationType.reminder,
+-      title: 'Vacunar Lote A hoy a las 10:00',
+-      description:
+-      'Aplicar vacuna antiparasitaria a todos los animales del lote',
+-      timestamp: 'Hoy, 8:30 AM',
+-      isUnread: true,
+-      icon: Icons.event,
+-      color: const Color(0xFF2E7D32),
+-      bgColor: const Color(0xFFA5D6A7),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.dataAlert,
+-      title: 'Peso fuera de rango en Vaca 03',
+-      description:
+-      'El peso registrado (850 kg) es inusualmente alto. Verifica el dato',
+-      timestamp: 'Hace 2 horas',
+-      isUnread: false,
+-      icon: Icons.warning,
+-      color: const Color(0xFFD32F2F),
+-      bgColor: const Color(0xFFFFCDD2),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.reminder,
+-      title: 'Pesaje semanal Lote A pendiente',
+-      description: 'Realizar pesaje antes de las 5:00 pm',
+-      timestamp: 'Hoy, 7:00 AM',
+-      isUnread: true,
+-      icon: Icons.assignment,
+-      color: const Color(0xFF2E7D32),
+-      bgColor: const Color(0xFFA5D6A7),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.alert,
+-      title: 'Registro incompleto en Lote C',
+-      description: 'Falta peso en el último pesaje de Vaca 05',
+-      timestamp: 'Ayer, 6:45 PM',
+-      isUnread: false,
+-      icon: Icons.error_outline,
+-      color: const Color(0xFFF57C00),
+-      bgColor: const Color(0xFFFFE0B2),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.system,
+-      title: 'Sincronización completada correctamente',
+-      description: 'Todos los datos fueron actualizados en la nube',
+-      timestamp: 'Hace 30 minutos',
+-      isUnread: false,
+-      icon: Icons.cloud_done,
+-      color: const Color(0xFF1976D2),
+-      bgColor: const Color(0xFFBBDEFB),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.reminder,
+-      title: 'Revisión veterinaria Lote D',
+-      description: 'Chequeo mensual programado para mañana 9:00 AM',
+-      timestamp: 'Hoy, 8:00 AM',
+-      isUnread: false,
+-      icon: Icons.edit,
+-      color: const Color(0xFF2E7D32),
+-      bgColor: const Color(0xFFA5D6A7),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.system,
+-      title: 'No se pudo sincronizar con el servidor',
+-      description: 'Revisa tu conexión a internet e intenta de nuevo',
+-      timestamp: 'Hace 1 hora',
+-      isUnread: false,
+-      icon: Icons.wifi_off,
+-      color: const Color(0xFFD32F2F),
+-      bgColor: const Color(0xFFFFCDD2),
+-    ),
+-    NotificationItem(
+-      type: NotificationType.alert,
+-      title: 'Faltan registros de alimentación',
+-      description:
+-      'No hay registros de alimentación en el Lote B desde hace 3 días',
+-      timestamp: 'Hace 6 horas',
+-      isUnread: false,
+-      icon: Icons.storage,
+-      color: const Color(0xFFF57C00),
+-      bgColor: const Color(0xFFFFE0B2),
+-    ),
+-  ];
++  void _markAllRead() {
++    setState(() {
++      _todayItems = _todayItems.map((n) => n.copyRead()).toList();
++      _yesterdayItems = _yesterdayItems.map((n) => n.copyRead()).toList();
++    });
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      backgroundColor: const Color(0xFFF9FAFB),
++      backgroundColor: BovaraColors.surfaceAlt,
+       body: SafeArea(
+         child: Column(
+           children: [
+-            _buildHeader(),
+-            _buildFilterTabs(),
+-            _buildMarkAsReadButton(),
++            _Header(
++              unread: _unreadCount,
++              onBack: () => context.go('/home'),
++              onMarkAllRead: _unreadCount > 0 ? _markAllRead : null,
++            ),
+             Expanded(
+-              child: ListView.builder(
+-                padding:
+-                const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+-                itemCount: notifications.length,
+-                itemBuilder: (context, index) {
+-                  return Padding(
+-                    padding: const EdgeInsets.only(bottom: 23),
+-                    child: _buildNotificationCard(notifications[index]),
+-                  );
+-                },
++              child: ListView(
++                padding: const EdgeInsets.fromLTRB(22, 6, 22, 30),
++                children: [
++                  const _SectionLabel(text: 'Hoy'),
++                  const SizedBox(height: 10),
++                  ..._todayItems.map((n) => Padding(
++                        padding: const EdgeInsets.only(bottom: 10),
++                        child: _NotifCard(item: n),
++                      )),
++                  const SizedBox(height: 18),
++                  const _SectionLabel(text: 'Ayer'),
++                  const SizedBox(height: 10),
++                  ..._yesterdayItems.map((n) => Padding(
++                        padding: const EdgeInsets.only(bottom: 10),
++                        child: Opacity(
++                          opacity: 0.75,
++                          child: _NotifCard(item: n),
++                        ),
++                      )),
++                ],
+               ),
+             ),
+           ],
+@@ -133,354 +134,270 @@ class _NotificationsPageState extends State<NotificationsPage> {
+       ),
+     );
+   }
++}
+ 
+-  // ---------------------------------------------------------------------------
+-  // Header / barra superior con back
+-  // ---------------------------------------------------------------------------
+-  Widget _buildHeader() {
+-    return Container(
+-      width: double.infinity,
+-      height: 72,
+-      decoration: const BoxDecoration(
+-        color: Color(0xFF2E7D32),
+-      ),
+-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
++// ═════════════════════════════════════════════════════════════════
++// HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _Header extends StatelessWidget {
++  final int unread;
++  final VoidCallback onBack;
++  final VoidCallback? onMarkAllRead;
++
++  const _Header({
++    required this.unread,
++    required this.onBack,
++    required this.onMarkAllRead,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
+       child: Row(
+-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+         children: [
+-          IconButton(
+-            // 👇 ahora sí regresa a la pantalla anterior
+-            onPressed: () {
+-              context.go('/home');
+-            },
+-            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
+-            padding: EdgeInsets.zero,
+-            constraints:
+-            const BoxConstraints(minWidth: 40, minHeight: 40),
+-          ),
+-          const Text(
+-            'Notificaciones',
+-            style: TextStyle(
+-              fontSize: 20,
+-              fontWeight: FontWeight.w600,
+-              color: Colors.white,
++          Material(
++            color: Colors.white,
++            borderRadius: BorderRadius.circular(12),
++            child: InkWell(
++              onTap: onBack,
++              borderRadius: BorderRadius.circular(12),
++              child: Container(
++                width: 38,
++                height: 38,
++                decoration: BoxDecoration(
++                  border: Border.all(color: BovaraColors.border, width: 1.5),
++                  borderRadius: BorderRadius.circular(12),
++                ),
++                child: const Icon(Icons.arrow_back_ios_new,
++                    size: 14, color: BovaraColors.textPrimary),
++              ),
+             ),
+           ),
+-          IconButton(
+-            onPressed: () {
+-              // TODO: podríamos navegar a Privacidad/Notificaciones del sistema
+-            },
+-            icon: const Icon(Icons.settings, color: Colors.white, size: 24),
+-            padding: EdgeInsets.zero,
+-            constraints:
+-            const BoxConstraints(minWidth: 40, minHeight: 40),
+-          ),
+-        ],
+-      ),
+-    );
+-  }
+-
+-  // ---------------------------------------------------------------------------
+-  // Filtros
+-  // ---------------------------------------------------------------------------
+-  Widget _buildFilterTabs() {
+-    return Container(
+-      width: double.infinity,
+-      decoration: const BoxDecoration(
+-        color: Colors.white,
+-        boxShadow: [
+-          BoxShadow(
+-            color: Color(0x0D000000),
+-            blurRadius: 2,
+-            offset: Offset(0, 1),
++          const SizedBox(width: 13),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text(
++                  'Notificaciones',
++                  style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++                    fontSize: 20,
++                    fontWeight: FontWeight.w800,
++                    letterSpacing: -0.2,
++                  ),
++                ),
++                const SizedBox(height: 1),
++                Text(
++                  unread == 0 ? 'Al día' : '$unread sin ${unread == 1 ? 'leer' : 'leer'}',
++                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
++                ),
++              ],
++            ),
+           ),
+-        ],
+-      ),
+-      padding: const EdgeInsets.all(16),
+-      child: SingleChildScrollView(
+-        scrollDirection: Axis.horizontal,
+-        child: Row(
+-          children: List.generate(
+-            tabs.length,
+-                (index) => Padding(
+-              padding:
+-              EdgeInsets.only(right: index < tabs.length - 1 ? 12 : 0),
+-              child: _buildFilterTab(
+-                label: tabs[index],
+-                isSelected: selectedTabIndex == index,
+-                onTap: () => setState(() => selectedTabIndex = index),
++          if (onMarkAllRead != null)
++            InkWell(
++              onTap: onMarkAllRead,
++              borderRadius: BorderRadius.circular(8),
++              child: Padding(
++                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
++                child: Text(
++                  'Marcar leídas',
++                  style: BovaraText.label(size: 12.5, color: BovaraColors.primary),
++                ),
+               ),
+             ),
+-          ),
+-        ),
++        ],
+       ),
+     );
+   }
++}
+ 
+-  Widget _buildFilterTab({
+-    required String label,
+-    required bool isSelected,
+-    required VoidCallback onTap,
+-  }) {
+-    return GestureDetector(
+-      onTap: onTap,
+-      child: Container(
+-        height: 40,
+-        padding:
+-        const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+-        decoration: BoxDecoration(
+-          color:
+-          isSelected ? const Color(0xFFA5D6A7) : const Color(0xFFE0E0E0),
+-          borderRadius: BorderRadius.circular(9999),
+-        ),
+-        child: Center(
+-          child: Text(
+-            label,
+-            style: TextStyle(
+-              fontSize: 14,
+-              fontWeight: FontWeight.w500,
+-              color: isSelected
+-                  ? const Color(0xFF2E7D32)
+-                  : const Color(0xFF616161),
+-            ),
+-          ),
+-        ),
+-      ),
+-    );
+-  }
++class _SectionLabel extends StatelessWidget {
++  final String text;
++  const _SectionLabel({required this.text});
+ 
+-  // ---------------------------------------------------------------------------
+-  // "Marcar todo como leído"
+-  // ---------------------------------------------------------------------------
+-  Widget _buildMarkAsReadButton() {
+-    return Container(
+-      width: double.infinity,
+-      padding:
+-      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+-      child: GestureDetector(
+-        onTap: () {
+-          // TODO: lógica para marcar como leído
+-        },
+-        child: const Text(
+-          'Marcar todo como leído',
+-          style: TextStyle(
+-            fontSize: 14,
+-            fontWeight: FontWeight.w500,
+-            color: Color(0xFF8D6E63),
+-          ),
+-        ),
+-      ),
++  @override
++  Widget build(BuildContext context) {
++    return Text(
++      text.toUpperCase(),
++      style: BovaraText.label(size: 11, color: BovaraColors.textMuted)
++          .copyWith(letterSpacing: 1.1, fontWeight: FontWeight.w800),
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// NOTIF CARD
++// ═════════════════════════════════════════════════════════════════
++
++class _NotifItem {
++  final IconData icon;
++  final Color iconBg;
++  final Color iconFg;
++  final String title;
++  final String body;
++  final String timestamp;
++  final bool unread;
++  final List<_NotifAction>? actions;
++
++  const _NotifItem({
++    required this.icon,
++    required this.iconBg,
++    required this.iconFg,
++    required this.title,
++    required this.body,
++    required this.timestamp,
++    required this.unread,
++    this.actions,
++  });
++
++  _NotifItem copyRead() => _NotifItem(
++        icon: icon,
++        iconBg: iconBg,
++        iconFg: iconFg,
++        title: title,
++        body: body,
++        timestamp: timestamp,
++        unread: false,
++        actions: actions,
++      );
++}
++
++class _NotifAction {
++  final String label;
++  final String? route;
++  final bool primary;
++  const _NotifAction({required this.label, this.route, required this.primary});
++}
++
++class _NotifCard extends StatelessWidget {
++  final _NotifItem item;
++  const _NotifCard({required this.item});
+ 
+-  // ---------------------------------------------------------------------------
+-  // Card de notificación
+-  // ---------------------------------------------------------------------------
+-  Widget _buildNotificationCard(NotificationItem notification) {
++  @override
++  Widget build(BuildContext context) {
+     return Container(
++      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+       decoration: BoxDecoration(
+         color: Colors.white,
+-        borderRadius: BorderRadius.circular(16),
++        borderRadius: BorderRadius.circular(18),
+         boxShadow: const [
+           BoxShadow(
+-            color: Color(0x0D000000),
+-            blurRadius: 2,
+-            offset: Offset(0, 1),
++            color: Color(0x18000000),
++            blurRadius: 16,
++            offset: Offset(0, 6),
++            spreadRadius: -10,
+           ),
+         ],
+       ),
+-      child: IntrinsicHeight(
+-        child: Row(
+-          crossAxisAlignment: CrossAxisAlignment.stretch,
+-          children: [
+-            // Barra de color
+-            Container(
+-              width: 6,
+-              decoration: BoxDecoration(
+-                color: notification.color,
+-                borderRadius: const BorderRadius.only(
+-                  topLeft: Radius.circular(16),
+-                  bottomLeft: Radius.circular(16),
++      child: Stack(
++        children: [
++          if (item.unread)
++            const Positioned(
++              top: 2,
++              right: 0,
++              child: _UnreadDot(),
++            ),
++          Row(
++            crossAxisAlignment: CrossAxisAlignment.start,
++            children: [
++              Container(
++                width: 40,
++                height: 40,
++                decoration: BoxDecoration(
++                  color: item.iconBg,
++                  borderRadius: BorderRadius.circular(13),
+                 ),
++                child: Icon(item.icon, size: 20, color: item.iconFg),
+               ),
+-            ),
+-
+-            // Contenido
+-            Expanded(
+-              child: Padding(
+-                padding: const EdgeInsets.all(20),
+-                child: Row(
+-                  crossAxisAlignment: CrossAxisAlignment.start,
+-                  children: [
+-                    // Icono
+-                    Container(
+-                      width: 48,
+-                      height: 48,
+-                      decoration: BoxDecoration(
+-                        color: notification.bgColor,
+-                        borderRadius: BorderRadius.circular(12),
++              const SizedBox(width: 13),
++              Expanded(
++                child: Padding(
++                  padding: EdgeInsets.only(right: item.unread ? 14 : 0),
++                  child: Column(
++                    crossAxisAlignment: CrossAxisAlignment.start,
++                    children: [
++                      Text(
++                        item.title,
++                        style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
++                            .copyWith(fontWeight: FontWeight.w800),
+                       ),
+-                      child: Icon(
+-                        notification.icon,
+-                        color: notification.color,
+-                        size: 24,
++                      const SizedBox(height: 2),
++                      Text(
++                        item.body,
++                        style: BovaraText.body(size: 12.5, color: BovaraColors.textSecondary)
++                            .copyWith(fontWeight: FontWeight.w500, height: 1.4),
+                       ),
+-                    ),
+-                    const SizedBox(width: 16),
+-
+-                    // Texto
+-                    Expanded(
+-                      child: Column(
+-                        crossAxisAlignment:
+-                        CrossAxisAlignment.start,
+-                        children: [
+-                          // Badge + indicador de no leído
+-                          Row(
+-                            children: [
+-                              Container(
+-                                padding:
+-                                const EdgeInsets.symmetric(
+-                                  horizontal: 12,
+-                                  vertical: 4,
+-                                ),
+-                                decoration: BoxDecoration(
+-                                  color: notification.type ==
+-                                      NotificationType.reminder
+-                                      ? const Color(0xFFF1F8E9)
+-                                      : notification.type ==
+-                                      NotificationType.dataAlert
+-                                      ? const Color(0xFFFFEBEE)
+-                                      : notification.type ==
+-                                      NotificationType.alert
+-                                      ? const Color(0xFFFFF3E0)
+-                                      : const Color(0xFFE3F2FD),
+-                                  borderRadius:
+-                                  BorderRadius.circular(4),
+-                                ),
+-                                child: Text(
+-                                  notification.type ==
+-                                      NotificationType.reminder
+-                                      ? 'Recordatorio'
+-                                      : notification.type ==
+-                                      NotificationType.dataAlert
+-                                      ? 'Alerta de datos'
+-                                      : notification.type ==
+-                                      NotificationType.alert
+-                                      ? 'Alerta'
+-                                      : 'Sistema',
+-                                  style: TextStyle(
+-                                    fontSize: 12,
+-                                    fontWeight: FontWeight.w500,
+-                                    color: notification.type ==
+-                                        NotificationType.reminder
+-                                        ? const Color(0xFF2E7D32)
+-                                        : notification.type ==
+-                                        NotificationType
+-                                            .dataAlert
+-                                        ? const Color(0xFFD32F2F)
+-                                        : notification.type ==
+-                                        NotificationType.alert
+-                                        ? const Color(
+-                                        0xFFF57C00)
+-                                        : const Color(
+-                                        0xFF1976D2),
+-                                  ),
+-                                ),
+-                              ),
+-                              if (notification.isUnread) ...[
+-                                const SizedBox(width: 8),
+-                                Container(
+-                                  width: 8,
+-                                  height: 8,
+-                                  decoration: const BoxDecoration(
+-                                    color: Color(0xFF2E7D32),
+-                                    shape: BoxShape.circle,
+-                                  ),
+-                                ),
+-                              ],
+-                            ],
+-                          ),
+-
+-                          const SizedBox(height: 8),
+-
+-                          // Título
+-                          Text(
+-                            notification.title,
+-                            style: const TextStyle(
+-                              fontSize: 16,
+-                              fontWeight: FontWeight.w600,
+-                              color: Color(0xFF222222),
+-                              height: 1.25,
+-                            ),
+-                          ),
+-
+-                          const SizedBox(height: 6),
+-
+-                          // Descripción
+-                          Text(
+-                            notification.description,
+-                            style: const TextStyle(
+-                              fontSize: 14,
+-                              fontWeight: FontWeight.w400,
+-                              color: Color(0xFF616161),
+-                              height: 1.6,
+-                            ),
+-                          ),
+-
+-                          const SizedBox(height: 18),
+-
+-                          // Timestamp
+-                          Text(
+-                            notification.timestamp,
+-                            style: const TextStyle(
+-                              fontSize: 12,
+-                              fontWeight: FontWeight.w400,
+-                              color: Color(0xFF616161),
+-                            ),
+-                          ),
+-                        ],
++                      if (item.actions != null && item.actions!.isNotEmpty) ...[
++                        const SizedBox(height: 9),
++                        Wrap(
++                          spacing: 7,
++                          runSpacing: 6,
++                          children: item.actions!
++                              .map((a) => _ActionChip(action: a))
++                              .toList(),
++                        ),
++                      ],
++                      const SizedBox(height: 8),
++                      Text(
++                        item.timestamp,
++                        style: BovaraText.label(size: 10.5, color: BovaraColors.textDisabled),
+                       ),
+-                    ),
+-                  ],
++                    ],
++                  ),
+                 ),
+               ),
+-            ),
+-          ],
+-        ),
++            ],
++          ),
++        ],
+       ),
+     );
+   }
+ }
+ 
+-// ---------------------------------------------------------------------------
+-// Modelos de datos
+-// ---------------------------------------------------------------------------
++class _UnreadDot extends StatelessWidget {
++  const _UnreadDot();
+ 
+-enum NotificationType {
+-  reminder,
+-  dataAlert,
+-  alert,
+-  system,
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      width: 8,
++      height: 8,
++      decoration: const BoxDecoration(
++        color: BovaraColors.info,
++        shape: BoxShape.circle,
++      ),
++    );
++  }
+ }
+ 
+-class NotificationItem {
+-  final NotificationType type;
+-  final String title;
+-  final String description;
+-  final String timestamp;
+-  final bool isUnread;
+-  final IconData icon;
+-  final Color color;
+-  final Color bgColor;
++class _ActionChip extends StatelessWidget {
++  final _NotifAction action;
++  const _ActionChip({required this.action});
+ 
+-  NotificationItem({
+-    required this.type,
+-    required this.title,
+-    required this.description,
+-    required this.timestamp,
+-    required this.isUnread,
+-    required this.icon,
+-    required this.color,
+-    required this.bgColor,
+-  });
++  @override
++  Widget build(BuildContext context) {
++    final bg = action.primary ? BovaraColors.celo : BovaraColors.surfaceAlt;
++    final fg = action.primary ? Colors.white : BovaraColors.textSecondary;
++
++    return InkWell(
++      onTap: () {
++        if (action.route != null) context.push(action.route!);
++      },
++      borderRadius: BorderRadius.circular(12),
++      child: Container(
++        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
++        decoration: BoxDecoration(
++          color: bg,
++          borderRadius: BorderRadius.circular(12),
++        ),
++        child: Text(
++          action.label,
++          style: BovaraText.label(size: 11.5, color: fg).copyWith(fontWeight: FontWeight.w800),
++        ),
++      ),
++    );
++  }
+ }
+diff --git a/lib/features/profile/presentation/pages/account_page.dart b/lib/features/profile/presentation/pages/account_page.dart
+index 5e80108..7ac00fd 100644
+--- a/lib/features/profile/presentation/pages/account_page.dart
++++ b/lib/features/profile/presentation/pages/account_page.dart
+@@ -1,9 +1,30 @@
+-// lib/src/features/auth/presentation/pages/account_page.dart
++// lib/features/profile/presentation/pages/account_page.dart
++//
++// Mi cuenta (Grupo H · Mi cuenta del rediseño).
++//
++// Estructura:
++//   - Header verde inmersivo con: botón atrás + avatar iniciales + nombre
++//     + subtítulo "Rol · Rancho" + botón editar.
++//   - Card superpuesta con 3 stats: animales / lotes / usuarios.
++//   - Card blanca con 4 filas: Datos del rancho, Usuarios y roles,
++//     Sincronización, Privacidad y seguridad.
++//   - Card blanca con 2 filas: Ayuda y soporte, Cerrar sesión.
++//   - Footer con versión + "Datos cifrados en tu dispositivo".
++//
++// LÓGICA CONECTADA REAL:
++//   - Nombre/rol/rancho/email desde AppStateRepository (persistidos en
++//     SharedPreferences por AppStateRepository).
++//   - Conteo de animales real desde CattleService.getCattleList().
++//   - Cerrar sesión llama a AppStateRepository.logout() (borra token +
++//     perfil) y navega a /welcome.
++
+ import 'package:flutter/material.dart';
+-import 'package:provider/provider.dart';
+ import 'package:go_router/go_router.dart';
++import 'package:provider/provider.dart';
+ 
+ import '../../../../core/application/app_state_repository.dart';
++import '../../../../core/theme/theme.dart';
++import '../../../cattle/data/services/cattle_service.dart';
+ 
+ class AccountPage extends StatefulWidget {
+   const AccountPage({super.key});
+@@ -13,239 +34,392 @@ class AccountPage extends StatefulWidget {
+ }
+ 
+ class _AccountPageState extends State<AccountPage> {
+-  bool _notificationsEnabled = true;
++  final _cattleService = CattleService();
++  int _cattleCount = 0;
++  int _loteCount = 0;
++  bool _loadingStats = true;
++
++  @override
++  void initState() {
++    super.initState();
++    _loadStats();
++  }
+ 
+-  String _initialsFromEmailOrName(String? value) {
+-    if (value == null || value.trim().isEmpty) return 'BV';
+-    final trimmed = value.trim();
++  Future<void> _loadStats() async {
++    try {
++      final list = await _cattleService.getCattleList();
++      if (!mounted) return;
++      setState(() {
++        _cattleCount = list.length;
++        _loteCount = list.map((c) => c.lote).toSet().length;
++        _loadingStats = false;
++      });
++    } catch (_) {
++      if (mounted) setState(() => _loadingStats = false);
++    }
++  }
+ 
+-    // si parece correo, usamos la primera letra
+-    if (trimmed.contains('@')) {
+-      return trimmed[0].toUpperCase();
++  Future<void> _confirmLogout(AppStateRepository appState) async {
++    final confirmed = await showDialog<bool>(
++      context: context,
++      builder: (ctx) => AlertDialog(
++        backgroundColor: BovaraColors.surface,
++        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
++        title: Text('Cerrar sesión',
++            style: BovaraText.heading(color: BovaraColors.textPrimary)),
++        content: Text('¿Seguro que quieres salir? Tus datos se conservan.',
++            style: BovaraText.body(size: 14, color: BovaraColors.textSecondary)),
++        actions: [
++          TextButton(
++            onPressed: () => Navigator.pop(ctx, false),
++            child: Text('Cancelar',
++                style: BovaraText.label(size: 14, color: BovaraColors.textSecondary)),
++          ),
++          TextButton(
++            onPressed: () => Navigator.pop(ctx, true),
++            child: Text('Salir',
++                style: BovaraText.label(size: 14, color: BovaraColors.danger)),
++          ),
++        ],
++      ),
++    );
++    if (confirmed == true) {
++      await appState.logout();
++      if (mounted) context.go('/welcome');
+     }
++  }
+ 
+-    // si parece nombre, tomamos primeras letras
+-    final parts = trimmed.split(' ').where((p) => p.isNotEmpty).toList();
+-    if (parts.isEmpty) return 'BV';
+-    if (parts.length == 1) return parts.first[0].toUpperCase();
++  String _initials(String name) {
++    final parts = name.trim().split(RegExp(r'\s+'));
++    if (parts.isEmpty || parts.first.isEmpty) return 'BV';
++    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+     return (parts[0][0] + parts[1][0]).toUpperCase();
+   }
+ 
+   @override
+   Widget build(BuildContext context) {
+     final appState = context.watch<AppStateRepository>();
+-
+-    // demo: en el futuro estos vendrán del backend / perfil del usuario
+-    final nombre = appState.userName ?? 'Don Carlos Pérez';
+-    final rol = appState.userRole ?? 'Ganadero / Propietario';
+-    final rancho = appState.ranchName ?? 'La Esperanza';
+-    final telefono = appState.userPhone ?? '+52 961 123 4567';
+-    final email = appState.userEmail ?? 'don.carlos@ejemplo.com';
+-
+-    final initials = _initialsFromEmailOrName(nombre.isNotEmpty ? nombre : email);
++    final name = appState.displayName;
++    final role = appState.userRole ?? 'Ganadero';
++    final ranch = appState.ranchName ?? 'Sin rancho asignado';
+ 
+     return Scaffold(
+-      appBar: AppBar(
+-        elevation: 0,
+-        backgroundColor: Colors.green,
+-        centerTitle: true,
+-        title: const Text(
+-          'Mi cuenta',
+-          style: TextStyle(
+-            color: Colors.white,
+-            fontWeight: FontWeight.w600,
+-          ),
+-        ),
+-        iconTheme: const IconThemeData(color: Color(0xFF222222)),
+-        leading: IconButton(
+-          icon: const Icon(Icons.arrow_back),
+-          onPressed: () => context.go('/home'),
+-        ),
+-      ),
+-      backgroundColor: const Color(0xFFF5F5F5),
+-      body: SingleChildScrollView(
+-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+-        child: Column(
+-          children: [
+-            // Card de perfil
+-            _ProfileHeaderCard(
+-              initials: initials,
+-              name: nombre,
+-              role: rol,
+-            ),
+-            const SizedBox(height: 16),
+-
+-            // Card de datos de la cuenta
+-            _AccountDataCard(
+-              phone: telefono,
+-              email: email,
+-              role: rol,
+-              ranch: rancho,
++      backgroundColor: BovaraColors.surfaceAlt,
++      body: CustomScrollView(
++        slivers: [
++          SliverToBoxAdapter(
++            child: _GreenHeader(
++              name: name,
++              initials: _initials(name),
++              subtitle: '$role · $ranch',
++              onBack: () => context.go('/home'),
+             ),
+-            const SizedBox(height: 16),
+-
+-            // Card de ajustes
+-            _SettingsCard(
+-              notificationsEnabled: _notificationsEnabled,
+-              onNotificationsChanged: (value) {
+-                setState(() {
+-                  _notificationsEnabled = value;
+-                });
+-              },
++          ),
++          SliverToBoxAdapter(
++            child: Transform.translate(
++              offset: const Offset(0, -38),
++              child: Padding(
++                padding: const EdgeInsets.symmetric(horizontal: 22),
++                child: Column(
++                  crossAxisAlignment: CrossAxisAlignment.stretch,
++                  children: [
++                    _StatsCard(
++                      animales: _cattleCount,
++                      lotes: _loteCount,
++                      usuarios: 1, // fijo hasta que exista endpoint de miembros
++                      loading: _loadingStats,
++                    ),
++                    const SizedBox(height: 14),
++                    _MenuCard(
++                      rows: [
++                        _MenuRow(
++                          icon: Icons.location_city_outlined,
++                          bg: BovaraColors.primarySoftBg,
++                          fg: BovaraColors.primary,
++                          title: 'Datos del rancho',
++                          subtitle: 'Nombre, ubicación, lotes',
++                          onTap: () {
++                            ScaffoldMessenger.of(context).showSnackBar(
++                              const SnackBar(content: Text('Disponible próximamente')),
++                            );
++                          },
++                        ),
++                        _MenuRow(
++                          icon: Icons.groups_outlined,
++                          bg: BovaraColors.infoSoftBg,
++                          fg: BovaraColors.info,
++                          title: 'Usuarios y roles',
++                          subtitle: 'Capataz, veterinario, trabajadores',
++                          onTap: () {
++                            ScaffoldMessenger.of(context).showSnackBar(
++                              const SnackBar(content: Text('Disponible próximamente')),
++                            );
++                          },
++                        ),
++                        _MenuRow(
++                          icon: Icons.sync_rounded,
++                          bg: BovaraColors.primarySoftBg,
++                          fg: BovaraColors.primary,
++                          title: 'Sincronización',
++                          subtitle: 'Última: hace 4 min · 3 pendientes',
++                          onTap: () {
++                            ScaffoldMessenger.of(context).showSnackBar(
++                              const SnackBar(content: Text('Disponible próximamente')),
++                            );
++                          },
++                        ),
++                        _MenuRow(
++                          icon: Icons.shield_outlined,
++                          bg: BovaraColors.warningSoftBg,
++                          fg: const Color(0xFFB8862E),
++                          title: 'Privacidad y seguridad',
++                          subtitle: 'Biometría, permisos, cifrado',
++                          onTap: () => context.push('/privacy'),
++                          isLast: true,
++                        ),
++                      ],
++                    ),
++                    const SizedBox(height: 14),
++                    _MenuCard(
++                      rows: [
++                        _MenuRow(
++                          icon: Icons.help_outline,
++                          bg: BovaraColors.surfaceAlt,
++                          fg: BovaraColors.textSecondary,
++                          title: 'Ayuda y soporte',
++                          subtitle: null,
++                          onTap: () {
++                            ScaffoldMessenger.of(context).showSnackBar(
++                              const SnackBar(content: Text('Disponible próximamente')),
++                            );
++                          },
++                        ),
++                        _MenuRow(
++                          icon: Icons.logout_rounded,
++                          bg: BovaraColors.dangerSoftBg,
++                          fg: BovaraColors.danger,
++                          title: 'Cerrar sesión',
++                          subtitle: null,
++                          titleColor: BovaraColors.danger,
++                          onTap: () => _confirmLogout(appState),
++                          isLast: true,
++                          showChevron: false,
++                        ),
++                      ],
++                    ),
++                    const SizedBox(height: 20),
++                    Center(
++                      child: Text(
++                        'Bovara v2.4.1 · Datos cifrados en tu dispositivo',
++                        style: BovaraText.label(size: 11.5, color: BovaraColors.textDisabled),
++                      ),
++                    ),
++                    const SizedBox(height: 40),
++                  ],
++                ),
++              ),
+             ),
+-            const SizedBox(height: 24),
+-
+-            // Botón cerrar sesión
+-            _LogoutButton(),
+-          ],
+-        ),
++          ),
++        ],
+       ),
+     );
+   }
+ }
+ 
+-/// Card superior con avatar + nombre + rol
+-class _ProfileHeaderCard extends StatelessWidget {
+-  final String initials;
++// ═════════════════════════════════════════════════════════════════
++// GREEN HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _GreenHeader extends StatelessWidget {
+   final String name;
+-  final String role;
++  final String initials;
++  final String subtitle;
++  final VoidCallback onBack;
+ 
+-  const _ProfileHeaderCard({
+-    required this.initials,
++  const _GreenHeader({
+     required this.name,
+-    required this.role,
++    required this.initials,
++    required this.subtitle,
++    required this.onBack,
+   });
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return Card(
+-      elevation: 2,
+-      surfaceTintColor: Colors.white,
+-      shape: RoundedRectangleBorder(
+-        borderRadius: BorderRadius.circular(12),
+-        side: const BorderSide(color: Color(0xFFE5E7EB)),
++    return Container(
++      decoration: const BoxDecoration(
++        gradient: LinearGradient(
++          begin: Alignment.topLeft,
++          end: Alignment.bottomRight,
++          colors: [BovaraColors.primary, Color(0xFF1B5C2C)],
++        ),
+       ),
+-      child: Padding(
+-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+-        child: Row(
+-          children: [
+-            CircleAvatar(
+-              radius: 36,
+-              backgroundColor: const Color(0xFF2E7D32),
+-              child: Text(
+-                initials,
+-                style: const TextStyle(
+-                  color: Colors.white,
+-                  fontSize: 24,
+-                  fontWeight: FontWeight.w600,
++      child: SafeArea(
++        bottom: false,
++        child: Padding(
++          padding: const EdgeInsets.fromLTRB(22, 8, 22, 60),
++          child: Row(
++            children: [
++              Material(
++                color: Colors.white.withValues(alpha: 0.15),
++                borderRadius: BorderRadius.circular(12),
++                child: InkWell(
++                  onTap: onBack,
++                  borderRadius: BorderRadius.circular(12),
++                  child: Container(
++                    width: 38,
++                    height: 38,
++                    alignment: Alignment.center,
++                    child: const Icon(Icons.arrow_back_ios_new, size: 14, color: Colors.white),
++                  ),
+                 ),
+               ),
+-            ),
+-            const SizedBox(width: 16),
+-            Expanded(
+-              child: Column(
+-                crossAxisAlignment: CrossAxisAlignment.start,
+-                children: [
+-                  Text(
+-                    name,
+-                    maxLines: 1,
+-                    overflow: TextOverflow.ellipsis,
+-                    style: const TextStyle(
+-                      color: Color(0xFF222222),
+-                      fontSize: 20,
+-                      fontWeight: FontWeight.w600,
++              const SizedBox(width: 13),
++              Container(
++                width: 58,
++                height: 58,
++                decoration: BoxDecoration(
++                  color: Colors.white.withValues(alpha: 0.92),
++                  borderRadius: BorderRadius.circular(18),
++                  boxShadow: [
++                    BoxShadow(
++                      color: Colors.black.withValues(alpha: 0.3),
++                      blurRadius: 18,
++                      offset: const Offset(0, 8),
++                      spreadRadius: -8,
+                     ),
++                  ],
++                ),
++                alignment: Alignment.center,
++                child: Text(
++                  initials,
++                  style: BovaraText.title(color: BovaraColors.primarySoftText).copyWith(
++                    fontSize: 20,
++                    fontWeight: FontWeight.w800,
+                   ),
+-                  const SizedBox(height: 4),
+-                  Text(
+-                    role,
+-                    maxLines: 1,
+-                    overflow: TextOverflow.ellipsis,
+-                    style: const TextStyle(
+-                      color: Color(0xFF616161),
+-                      fontSize: 16,
++                ),
++              ),
++              const SizedBox(width: 12),
++              Expanded(
++                child: Column(
++                  crossAxisAlignment: CrossAxisAlignment.start,
++                  children: [
++                    Text(
++                      name,
++                      style: BovaraText.title(color: Colors.white).copyWith(
++                        fontSize: 19,
++                        fontWeight: FontWeight.w800,
++                        letterSpacing: -0.19,
++                      ),
++                      overflow: TextOverflow.ellipsis,
++                    ),
++                    const SizedBox(height: 2),
++                    Text(
++                      subtitle,
++                      style: BovaraText.label(
++                        size: 12.5,
++                        color: Colors.white.withValues(alpha: 0.85),
++                      ),
++                      overflow: TextOverflow.ellipsis,
+                     ),
++                  ],
++                ),
++              ),
++              Material(
++                color: Colors.white.withValues(alpha: 0.15),
++                borderRadius: BorderRadius.circular(12),
++                child: InkWell(
++                  onTap: () {
++                    ScaffoldMessenger.of(context).showSnackBar(
++                      const SnackBar(content: Text('Editar perfil próximamente')),
++                    );
++                  },
++                  borderRadius: BorderRadius.circular(12),
++                  child: Container(
++                    width: 38,
++                    height: 38,
++                    alignment: Alignment.center,
++                    child: const Icon(Icons.edit_outlined, size: 16, color: Colors.white),
+                   ),
+-                ],
++                ),
+               ),
+-            ),
+-          ],
++            ],
++          ),
+         ),
+       ),
+     );
+   }
+ }
+ 
+-/// Card con datos de teléfono, correo, rol y rancho
+-class _AccountDataCard extends StatelessWidget {
+-  final String phone;
+-  final String email;
+-  final String role;
+-  final String ranch;
++// ═════════════════════════════════════════════════════════════════
++// STATS CARD
++// ═════════════════════════════════════════════════════════════════
++
++class _StatsCard extends StatelessWidget {
++  final int animales;
++  final int lotes;
++  final int usuarios;
++  final bool loading;
+ 
+-  const _AccountDataCard({
+-    required this.phone,
+-    required this.email,
+-    required this.role,
+-    required this.ranch,
++  const _StatsCard({
++    required this.animales,
++    required this.lotes,
++    required this.usuarios,
++    required this.loading,
+   });
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return Card(
+-      elevation: 2,
+-      surfaceTintColor: Colors.white,
+-      shape: RoundedRectangleBorder(
+-        borderRadius: BorderRadius.circular(12),
+-        side: const BorderSide(color: Color(0xFFE5E7EB)),
++    return Container(
++      padding: const EdgeInsets.all(16),
++      decoration: BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(20),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x4A000000),
++            blurRadius: 34,
++            offset: Offset(0, 14),
++            spreadRadius: -16,
++          ),
++        ],
+       ),
++      child: IntrinsicHeight(
++        child: Row(
++          children: [
++            _StatCol(value: loading ? '…' : '$animales', label: 'Animales'),
++            const _StatDivider(),
++            _StatCol(value: loading ? '…' : '$lotes', label: 'Lotes'),
++            const _StatDivider(),
++            _StatCol(value: '$usuarios', label: 'Usuarios'),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++class _StatCol extends StatelessWidget {
++  final String value;
++  final String label;
++  const _StatCol({required this.value, required this.label});
++
++  @override
++  Widget build(BuildContext context) {
++    return Expanded(
+       child: Column(
+-        mainAxisSize: MainAxisSize.min,
+         children: [
+-          // Encabezado
+-          Container(
+-            width: double.infinity,
+-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+-            decoration: const BoxDecoration(
+-              border: Border(
+-                bottom: BorderSide(color: Color(0xFFF3F4F6)),
+-              ),
++          Text(
++            value,
++            style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++              fontSize: 21,
++              fontWeight: FontWeight.w800,
++              height: 1.1,
+             ),
+-            child: const Text(
+-              'Datos de la cuenta',
+-              style: TextStyle(
+-                color: Color(0xFF222222),
+-                fontSize: 16,
+-                fontWeight: FontWeight.w600,
+-              ),
+-            ),
+-          ),
+-          // Teléfono
+-          _AccountDataRow(
+-            icon: Icons.phone_iphone_outlined,
+-            label: 'Teléfono',
+-            value: phone,
+-          ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          // Correo
+-          _AccountDataRow(
+-            icon: Icons.mail_outline,
+-            label: 'Correo electrónico',
+-            value: email,
+-          ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          // Rol
+-          _AccountDataRow(
+-            icon: Icons.badge_outlined,
+-            label: 'Rol en el rancho',
+-            value: role,
+           ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          // Rancho
+-          _AccountDataRow(
+-            icon: Icons.agriculture_outlined,
+-            label: 'Rancho',
+-            value: ranch,
++          const SizedBox(height: 1),
++          Text(
++            label,
++            style: BovaraText.label(size: 11, color: BovaraColors.textMuted),
+           ),
+         ],
+       ),
+@@ -253,199 +427,120 @@ class _AccountDataCard extends StatelessWidget {
+   }
+ }
+ 
+-class _AccountDataRow extends StatelessWidget {
+-  final IconData icon;
+-  final String label;
+-  final String value;
+-
+-  const _AccountDataRow({
+-    required this.icon,
+-    required this.label,
+-    required this.value,
+-  });
++class _StatDivider extends StatelessWidget {
++  const _StatDivider();
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return ListTile(
+-      leading: Container(
+-        width: 40,
+-        height: 40,
+-        decoration: BoxDecoration(
+-          color: const Color(0x4CA5D6A7),
+-          borderRadius: BorderRadius.circular(8),
+-        ),
+-        child: Icon(icon, color: const Color(0xFF2E7D32), size: 22),
+-      ),
+-      title: Text(
+-        label,
+-        style: const TextStyle(
+-          color: Color(0xFF616161),
+-          fontSize: 14,
+-        ),
+-      ),
+-      subtitle: Text(
+-        value,
+-        style: const TextStyle(
+-          color: Color(0xFF222222),
+-          fontSize: 16,
+-          fontWeight: FontWeight.w500,
+-        ),
+-      ),
+-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+-    );
++    return Container(width: 1, color: const Color(0xFFF0F1EB));
+   }
+ }
+ 
+-/// Card con ajustes
+-class _SettingsCard extends StatelessWidget {
+-  final bool notificationsEnabled;
+-  final ValueChanged<bool> onNotificationsChanged;
++// ═════════════════════════════════════════════════════════════════
++// MENU CARDS
++// ═════════════════════════════════════════════════════════════════
+ 
+-  const _SettingsCard({
+-    required this.notificationsEnabled,
+-    required this.onNotificationsChanged,
+-  });
++class _MenuCard extends StatelessWidget {
++  final List<_MenuRow> rows;
++  const _MenuCard({required this.rows});
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return Card(
+-      elevation: 2,
+-      surfaceTintColor: Colors.white,
+-      shape: RoundedRectangleBorder(
+-        borderRadius: BorderRadius.circular(12),
+-        side: const BorderSide(color: Color(0xFFE5E7EB)),
+-      ),
+-      child: Column(
+-        mainAxisSize: MainAxisSize.min,
+-        children: [
+-          // Encabezado
+-          Container(
+-            width: double.infinity,
+-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+-            decoration: const BoxDecoration(
+-              border: Border(
+-                bottom: BorderSide(color: Color(0xFFF3F4F6)),
+-              ),
+-            ),
+-            child: const Text(
+-              'Ajustes',
+-              style: TextStyle(
+-                color: Color(0xFF222222),
+-                fontSize: 16,
+-                fontWeight: FontWeight.w600,
+-              ),
+-            ),
+-          ),
+-          ListTile(
+-            leading: _settingsIcon(Icons.edit_outlined),
+-            title: const Text(
+-              'Editar datos de la cuenta',
+-              style: TextStyle(
+-                fontSize: 16,
+-                color: Color(0xFF222222),
+-              ),
+-            ),
+-            trailing: const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
+-            onTap: () {
+-              // TODO: navegar a editar perfil
+-            },
+-          ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          ListTile(
+-            leading: _settingsIcon(Icons.lock_reset_outlined),
+-            title: const Text(
+-              'Cambiar contraseña',
+-              style: TextStyle(
+-                fontSize: 16,
+-                color: Color(0xFF222222),
+-              ),
+-            ),
+-            trailing: const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
+-            onTap: () {
+-              // TODO: navegar a cambiar contraseña
+-            },
+-          ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          ListTile(
+-            leading: _settingsIcon(Icons.notifications_active_outlined),
+-            title: const Text(
+-              'Notificaciones',
+-              style: TextStyle(
+-                fontSize: 16,
+-                color: Color(0xFF222222),
+-              ),
+-            ),
+-            trailing: Switch(
+-              value: notificationsEnabled,
+-              activeColor: Colors.white,
+-              activeTrackColor: const Color(0xFF2E7D32),
+-              onChanged: onNotificationsChanged,
+-            ),
+-          ),
+-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+-          ListTile(
+-            leading: _settingsIcon(Icons.shield_outlined),
+-            title: const Text(
+-              'Privacidad y seguridad',
+-              style: TextStyle(
+-                fontSize: 16,
+-                color: Color(0xFF222222),
+-              ),
+-            ),
+-            trailing: const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
+-            onTap: () {
+-              context.push('/privacy');
+-            },
++    return Container(
++      decoration: BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(22),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x22000000),
++            blurRadius: 22,
++            offset: Offset(0, 8),
++            spreadRadius: -14,
+           ),
+         ],
+       ),
+-    );
+-  }
+-
+-  Widget _settingsIcon(IconData icon) {
+-    return Container(
+-      width: 40,
+-      height: 40,
+-      decoration: BoxDecoration(
+-        color: const Color(0x4CA5D6A7),
+-        borderRadius: BorderRadius.circular(8),
++      clipBehavior: Clip.antiAlias,
++      child: Column(
++        children: rows,
+       ),
+-      child: Icon(icon, color: const Color(0xFF2E7D32), size: 22),
+     );
+   }
+ }
+ 
+-/// Botón rojo de cerrar sesión
+-class _LogoutButton extends StatelessWidget {
++class _MenuRow extends StatelessWidget {
++  final IconData icon;
++  final Color bg;
++  final Color fg;
++  final String title;
++  final String? subtitle;
++  final Color? titleColor;
++  final VoidCallback onTap;
++  final bool isLast;
++  final bool showChevron;
++
++  const _MenuRow({
++    required this.icon,
++    required this.bg,
++    required this.fg,
++    required this.title,
++    required this.subtitle,
++    required this.onTap,
++    this.titleColor,
++    this.isLast = false,
++    this.showChevron = true,
++  });
++
+   @override
+   Widget build(BuildContext context) {
+-    return SizedBox(
+-      width: double.infinity,
+-      height: 52,
+-      child: OutlinedButton.icon(
+-        icon: const Icon(Icons.logout, color: Color(0xFFD32F2F)),
+-        label: const Text(
+-          'Cerrar sesión',
+-          style: TextStyle(
+-            color: Color(0xFFD32F2F),
+-            fontSize: 16,
+-            fontWeight: FontWeight.w600,
+-          ),
++    return InkWell(
++      onTap: onTap,
++      child: Container(
++        padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 15),
++        decoration: BoxDecoration(
++          border: isLast
++              ? null
++              : const Border(
++                  bottom: BorderSide(color: Color(0xFFF2F3ED), width: 1),
++                ),
+         ),
+-        style: OutlinedButton.styleFrom(
+-          side: const BorderSide(color: Color(0xFFD32F2F), width: 2),
+-          shape: RoundedRectangleBorder(
+-            borderRadius: BorderRadius.circular(12),
+-          ),
+-          backgroundColor: Colors.white,
++        child: Row(
++          children: [
++            Container(
++              width: 38,
++              height: 38,
++              decoration: BoxDecoration(
++                color: bg,
++                borderRadius: BorderRadius.circular(12),
++              ),
++              child: Icon(icon, size: 17, color: fg),
++            ),
++            const SizedBox(width: 13),
++            Expanded(
++              child: Column(
++                crossAxisAlignment: CrossAxisAlignment.start,
++                children: [
++                  Text(
++                    title,
++                    style: BovaraText.body(
++                      size: 14,
++                      color: titleColor ?? BovaraColors.textPrimary,
++                    ).copyWith(fontWeight: FontWeight.w700),
++                  ),
++                  if (subtitle != null) ...[
++                    const SizedBox(height: 1),
++                    Text(
++                      subtitle!,
++                      style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted),
++                    ),
++                  ],
++                ],
++              ),
++            ),
++            if (showChevron)
++              const Icon(Icons.chevron_right,
++                  size: 18, color: BovaraColors.textDisabled),
++          ],
+         ),
+-        onPressed: () {
+-          // logout global
+-          context.read<AppStateRepository>().setLoggedIn(false);
+-
+-          // llevar al welcome (o login)
+-          context.go('/welcome');
+-        },
+       ),
+     );
+   }
+diff --git a/lib/features/profile/presentation/pages/privacy_security_page.dart b/lib/features/profile/presentation/pages/privacy_security_page.dart
+index c059161..fff6f51 100644
+--- a/lib/features/profile/presentation/pages/privacy_security_page.dart
++++ b/lib/features/profile/presentation/pages/privacy_security_page.dart
+@@ -1,4 +1,25 @@
++// lib/features/profile/presentation/pages/privacy_security_page.dart
++//
++// Privacidad y seguridad (Grupo H · Privacidad del rediseño).
++//
++// Estructura (tres cards agrupadas):
++//   1. Acceso a la app: Face ID (toggle), Huella digital (toggle),
++//      PIN de respaldo (acción "Cambiar").
++//   2. Permisos por rol: lista de miembros del rancho con avatar de
++//      iniciales, nombre, descripción de permisos, acción "Editar".
++//   3. Tus datos: Cifrado E2E (estado activo), Descargar mis datos
++//      (acción), Eliminar cuenta y datos (destructivo).
++//
++// NOTA: los toggles y acciones son visuales por ahora. Se dejan
++// funcionales localmente para que se sienta la interacción, pero no se
++// persiste el cambio ni se llama a ningún backend — hasta que exista un
++// endpoint de configuración de usuario y un plugin de biometría instalado
++// en el proyecto.
++
+ import 'package:flutter/material.dart';
++import 'package:go_router/go_router.dart';
++
++import '../../../../core/theme/theme.dart';
+ 
+ class PrivacySecurityPage extends StatefulWidget {
+   const PrivacySecurityPage({super.key});
+@@ -8,605 +29,388 @@ class PrivacySecurityPage extends StatefulWidget {
+ }
+ 
+ class _PrivacySecurityPageState extends State<PrivacySecurityPage> {
+-  bool shareDataOnly = true;
+-  bool allowModelImprovement = false;
+-  bool cameraPermission = true;
+-  bool microphonePermission = true;
+-  bool notificationsPermission = true;
+-  SyncMode syncMode = SyncMode.wifiOnly;
++  bool _faceId = true;
++  bool _fingerprint = false;
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      backgroundColor: Colors.white,
+-      appBar: AppBar(
+-        backgroundColor: const Color(0xFF2E7D32),
+-        elevation: 0,
+-        leading: IconButton(
+-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+-          onPressed: () {
+-            // volver a la pantalla anterior
+-            Navigator.of(context).pop();
+-            // si usas go_router puedes usar:
+-            // context.pop();
+-          },
+-        ),
+-        title: const Text(
+-          'Privacidad y Seguridad',
+-          style: TextStyle(
+-            color: Colors.white,
+-            fontSize: 18,
+-            fontWeight: FontWeight.w600,
+-          ),
+-        ),
+-      ),
+-      body: SingleChildScrollView(
++      backgroundColor: BovaraColors.surfaceAlt,
++      body: SafeArea(
+         child: Column(
+           children: [
+-            _buildHeaderSection(),
+-            _buildPrivacySection(),
+-            _buildConnectivitySection(),
+-            _buildPermissionsSection(),
+-            _buildExportDataSection(),
+-            _buildOtherOptionsSection(),
++            _Header(onBack: () => context.pop()),
++            Expanded(
++              child: ListView(
++                padding: const EdgeInsets.fromLTRB(22, 4, 22, 30),
++                children: [
++                  _SectionCard(
++                    label: 'Acceso a la app',
++                    children: [
++                      _ToggleRow(
++                        icon: Icons.face_retouching_natural_outlined,
++                        iconBg: BovaraColors.primarySoftBg,
++                        iconFg: BovaraColors.primary,
++                        title: 'Face ID',
++                        subtitle: 'Desbloqueo con rostro',
++                        value: _faceId,
++                        onChanged: (v) => setState(() => _faceId = v),
++                      ),
++                      _ToggleRow(
++                        icon: Icons.fingerprint_rounded,
++                        iconBg: BovaraColors.primarySoftBg,
++                        iconFg: BovaraColors.primary,
++                        title: 'Huella digital',
++                        subtitle: 'Para el capataz en campo',
++                        value: _fingerprint,
++                        onChanged: (v) => setState(() => _fingerprint = v),
++                      ),
++                      _ActionRow(
++                        icon: Icons.dialpad_rounded,
++                        iconBg: BovaraColors.surfaceAlt,
++                        iconFg: BovaraColors.textSecondary,
++                        title: 'PIN de respaldo',
++                        subtitle: 'Cuando la biometría falla',
++                        actionLabel: 'Cambiar',
++                        onTap: () => _showComingSoon(),
++                        isLast: true,
++                      ),
++                    ],
++                  ),
++                  const SizedBox(height: 14),
++                  _SectionCard(
++                    label: 'Permisos por rol',
++                    children: const [
++                      _MemberRow(
++                        initials: 'JM',
++                        initialsBg: BovaraColors.primarySoftBg,
++                        initialsFg: BovaraColors.primarySoftText,
++                        name: 'Juan Martínez · Capataz',
++                        permissions: 'Registrar y editar eventos',
++                      ),
++                      _MemberRow(
++                        initials: 'DR',
++                        initialsBg: BovaraColors.infoSoftBg,
++                        initialsFg: BovaraColors.info,
++                        name: 'Dra. Ríos · Veterinaria',
++                        permissions: 'Historial clínico completo',
++                      ),
++                      _MemberRow(
++                        initials: 'PL',
++                        initialsBg: BovaraColors.warningSoftBg,
++                        initialsFg: Color(0xFFB8862E),
++                        name: 'Pedro López · Trabajador',
++                        permissions: 'Solo registrar, sin editar',
++                        isLast: true,
++                      ),
++                    ],
++                  ),
++                  const SizedBox(height: 14),
++                  _SectionCard(
++                    label: 'Tus datos',
++                    children: [
++                      _StaticRow(
++                        icon: Icons.check_circle_outlined,
++                        iconBg: BovaraColors.primarySoftBg,
++                        iconFg: BovaraColors.primary,
++                        title: 'Cifrado de extremo a extremo',
++                        subtitle: 'Activo · AES-256',
++                        subtitleColor: BovaraColors.primarySoftText,
++                      ),
++                      _ActionRow(
++                        icon: Icons.download_rounded,
++                        iconBg: BovaraColors.infoSoftBg,
++                        iconFg: BovaraColors.info,
++                        title: 'Descargar mis datos',
++                        subtitle: 'Exportar todo en CSV',
++                        onTap: () => _showComingSoon(),
++                      ),
++                      _ActionRow(
++                        icon: Icons.delete_outline_rounded,
++                        iconBg: BovaraColors.dangerSoftBg,
++                        iconFg: BovaraColors.danger,
++                        title: 'Eliminar cuenta y datos',
++                        subtitle: 'Irreversible tras 30 días',
++                        titleColor: BovaraColors.danger,
++                        onTap: () => _showDeleteConfirm(),
++                        isLast: true,
++                        showChevron: false,
++                      ),
++                    ],
++                  ),
++                ],
++              ),
++            ),
+           ],
+         ),
+       ),
+     );
+   }
+ 
+-  // -------------------- Secciones --------------------
+-
+-  Widget _buildHeaderSection() {
+-    return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+-      decoration: const BoxDecoration(
+-        border: Border(
+-          bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1),
+-        ),
+-      ),
+-      child: Column(
+-        children: [
+-          Container(
+-            width: 64,
+-            height: 64,
+-            decoration: BoxDecoration(
+-              color: const Color(0xFFA5D6A7).withOpacity(0.3),
+-              shape: BoxShape.circle,
+-            ),
+-            child: const Icon(
+-              Icons.shield_outlined,
+-              color: Color(0xFF2E7D32),
+-              size: 30,
+-            ),
+-          ),
+-          const SizedBox(height: 16),
+-          const Text(
+-            'Tu privacidad es importante',
+-            style: TextStyle(
+-              fontSize: 20,
+-              fontWeight: FontWeight.w700,
+-              color: Color(0xFF222222),
+-            ),
+-            textAlign: TextAlign.center,
+-          ),
+-          const SizedBox(height: 8),
+-          const Text(
+-            'Controla cómo se manejan tus datos y\n'
+-                'configura tus preferencias de\n'
+-                'seguridad en Bovara.',
+-            style: TextStyle(
+-              fontSize: 16,
+-              fontWeight: FontWeight.w400,
+-              color: Color(0xFF616161),
+-              height: 1.625,
+-            ),
+-            textAlign: TextAlign.center,
+-          ),
+-        ],
+-      ),
++  void _showComingSoon() {
++    ScaffoldMessenger.of(context).showSnackBar(
++      const SnackBar(content: Text('Disponible próximamente')),
+     );
+   }
+ 
+-  Widget _buildPrivacySection() {
+-    return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.all(24),
+-      decoration: const BoxDecoration(
+-        border: Border(
+-          bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1),
++  Future<void> _showDeleteConfirm() async {
++    await showDialog<void>(
++      context: context,
++      builder: (ctx) => AlertDialog(
++        backgroundColor: BovaraColors.surface,
++        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
++        title: Text('Eliminar cuenta',
++            style: BovaraText.heading(color: BovaraColors.danger)),
++        content: Text(
++          'Esta acción es irreversible tras 30 días. Se eliminarán tus animales, eventos y recordatorios. ¿Continuar?',
++          style: BovaraText.body(size: 14, color: BovaraColors.textSecondary),
+         ),
+-      ),
+-      child: Column(
+-        crossAxisAlignment: CrossAxisAlignment.start,
+-        children: [
+-          const Text(
+-            'PRIVACIDAD Y SEGURIDAD',
+-            style: TextStyle(
+-              fontSize: 12,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF616161),
+-              letterSpacing: 0.6,
+-            ),
+-          ),
+-          const SizedBox(height: 16),
+-          _buildToggleOption(
+-            title: 'Compartir datos solo en mi\ncuenta',
+-            description: 'Los datos permanecen privados\nen tu cuenta.',
+-            value: shareDataOnly,
+-            onChanged: (value) => setState(() => shareDataOnly = value),
+-          ),
+-          const SizedBox(height: 24),
+-          _buildToggleOption(
+-            title: 'Permitir mejora de modelos\nlocales',
+-            description: 'Ayuda a mejorar el rendimiento\nlocal.',
+-            value: allowModelImprovement,
+-            onChanged: (value) =>
+-                setState(() => allowModelImprovement = value),
++        actions: [
++          TextButton(
++            onPressed: () => Navigator.pop(ctx),
++            child: Text('Cancelar',
++                style: BovaraText.label(size: 14, color: BovaraColors.textSecondary)),
+           ),
+-          const SizedBox(height: 24),
+-          Row(
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              const Expanded(
+-                child: Column(
+-                  crossAxisAlignment: CrossAxisAlignment.start,
+-                  children: [
+-                    Text(
+-                      'Borrar datos locales',
+-                      style: TextStyle(
+-                        fontSize: 16,
+-                        fontWeight: FontWeight.w500,
+-                        color: Color(0xFF222222),
+-                      ),
+-                    ),
+-                    SizedBox(height: 4),
+-                    Text(
+-                      'Elimina todos los datos\nalmacenados localmente.',
+-                      style: TextStyle(
+-                        fontSize: 14,
+-                        fontWeight: FontWeight.w400,
+-                        color: Color(0xFF616161),
+-                        height: 1.4,
+-                      ),
+-                    ),
+-                  ],
+-                ),
+-              ),
+-              const SizedBox(width: 16),
+-              ElevatedButton(
+-                onPressed: () {
+-                  // TODO: implementar borrado local
+-                },
+-                style: ElevatedButton.styleFrom(
+-                  backgroundColor: const Color(0xFFD32F2F),
+-                  foregroundColor: Colors.white,
+-                  elevation: 0,
+-                  padding:
+-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+-                  shape: RoundedRectangleBorder(
+-                    borderRadius: BorderRadius.circular(8),
+-                  ),
+-                ),
+-                child: const Text(
+-                  'Borrar',
+-                  style: TextStyle(
+-                    fontSize: 14,
+-                    fontWeight: FontWeight.w500,
+-                  ),
+-                ),
+-              ),
+-            ],
++          TextButton(
++            onPressed: () {
++              Navigator.pop(ctx);
++              _showComingSoon();
++            },
++            child: Text('Eliminar',
++                style: BovaraText.label(size: 14, color: BovaraColors.danger)),
+           ),
+         ],
+       ),
+     );
+   }
++}
+ 
+-  Widget _buildConnectivitySection() {
+-    return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.all(24),
+-      decoration: const BoxDecoration(
+-        border: Border(
+-          bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1),
+-        ),
+-      ),
+-      child: Column(
+-        crossAxisAlignment: CrossAxisAlignment.start,
++// ═════════════════════════════════════════════════════════════════
++// HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _Header extends StatelessWidget {
++  final VoidCallback onBack;
++  const _Header({required this.onBack});
++
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
++      child: Row(
+         children: [
+-          const Text(
+-            'CONECTIVIDAD',
+-            style: TextStyle(
+-              fontSize: 12,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF616161),
+-              letterSpacing: 0.6,
++          Material(
++            color: Colors.white,
++            borderRadius: BorderRadius.circular(12),
++            child: InkWell(
++              onTap: onBack,
++              borderRadius: BorderRadius.circular(12),
++              child: Container(
++                width: 38,
++                height: 38,
++                decoration: BoxDecoration(
++                  border: Border.all(color: BovaraColors.border, width: 1.5),
++                  borderRadius: BorderRadius.circular(12),
++                ),
++                child: const Icon(Icons.arrow_back_ios_new,
++                    size: 14, color: BovaraColors.textPrimary),
++              ),
+             ),
+           ),
+-          const SizedBox(height: 12),
+-          const Text(
+-            'Sincronización',
+-            style: TextStyle(
+-              fontSize: 16,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF222222),
++          const SizedBox(width: 14),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text('Privacidad y seguridad',
++                    style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++                      fontSize: 19,
++                      fontWeight: FontWeight.w800,
++                      letterSpacing: -0.19,
++                    )),
++                const SizedBox(height: 1),
++                Text('Tu rancho, tus reglas',
++                    style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
++              ],
+             ),
+           ),
+-          const SizedBox(height: 16),
+-          _buildRadioOption(
+-            title: 'Solo por Wi-Fi',
+-            description:
+-            'Sincroniza únicamente cuando estés\nconectado a Wi-Fi.',
+-            value: SyncMode.wifiOnly,
+-            groupValue: syncMode,
+-            onChanged: (value) => setState(() => syncMode = value!),
+-          ),
+-          const SizedBox(height: 20),
+-          _buildRadioOption(
+-            title: 'Siempre',
+-            description:
+-            'Sincroniza usando Wi-Fi y datos\nmóviles.',
+-            value: SyncMode.always,
+-            groupValue: syncMode,
+-            onChanged: (value) => setState(() => syncMode = value!),
+-          ),
+-          const SizedBox(height: 20),
+-          _buildRadioOption(
+-            title: 'Manual',
+-            description: 'Sincroniza solo cuando lo solicites.',
+-            value: SyncMode.manual,
+-            groupValue: syncMode,
+-            onChanged: (value) => setState(() => syncMode = value!),
+-            isLast: true,
+-          ),
+         ],
+       ),
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// SECTION CARD (wrapper con label pequeña)
++// ═════════════════════════════════════════════════════════════════
++
++class _SectionCard extends StatelessWidget {
++  final String label;
++  final List<Widget> children;
++
++  const _SectionCard({required this.label, required this.children});
+ 
+-  Widget _buildPermissionsSection() {
++  @override
++  Widget build(BuildContext context) {
+     return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.all(24),
+-      decoration: const BoxDecoration(
+-        border: Border(
+-          bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1),
+-        ),
+-      ),
+-      child: Column(
+-        crossAxisAlignment: CrossAxisAlignment.start,
+-        children: [
+-          const Text(
+-            'PERMISOS',
+-            style: TextStyle(
+-              fontSize: 12,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF616161),
+-              letterSpacing: 0.6,
+-            ),
+-          ),
+-          const SizedBox(height: 16),
+-          _buildPermissionOption(
+-            icon: Icons.camera_alt_outlined,
+-            iconColor: const Color(0xFF2E7D32),
+-            iconBgColor: const Color(0xFFA5D6A7),
+-            title: 'Cámara',
+-            description: 'Para capturar fotos y\nvideos.',
+-            value: cameraPermission,
+-            onChanged: (value) => setState(() => cameraPermission = value),
+-          ),
+-          const SizedBox(height: 14),
+-          _buildPermissionOption(
+-            icon: Icons.mic_none,
+-            iconColor: const Color(0xFFF97316),
+-            iconBgColor: const Color(0xFFFED7AA),
+-            title: 'Micrófono',
+-            description: 'Para grabación de\naudio.',
+-            value: microphonePermission,
+-            onChanged: (value) =>
+-                setState(() => microphonePermission = value),
+-          ),
+-          const SizedBox(height: 14),
+-          _buildPermissionOption(
+-            icon: Icons.notifications_none,
+-            iconColor: const Color(0xFF3B82F6),
+-            iconBgColor: const Color(0xFFDBEAFE),
+-            title: 'Notificaciones',
+-            description: 'Para alertas y\nrecordatorios.',
+-            value: notificationsPermission,
+-            onChanged: (value) =>
+-                setState(() => notificationsPermission = value),
++      decoration: BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(22),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x22000000),
++            blurRadius: 22,
++            offset: Offset(0, 8),
++            spreadRadius: -14,
+           ),
+         ],
+       ),
+-    );
+-  }
+-
+-  Widget _buildExportDataSection() {
+-    return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.all(24),
+-      decoration: const BoxDecoration(
+-        border: Border(
+-          bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1),
+-        ),
+-      ),
++      clipBehavior: Clip.antiAlias,
+       child: Column(
+         crossAxisAlignment: CrossAxisAlignment.start,
+         children: [
+-          const Text(
+-            'EXPORTAR DATOS',
+-            style: TextStyle(
+-              fontSize: 12,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF616161),
+-              letterSpacing: 0.6,
++          Padding(
++            padding: const EdgeInsets.fromLTRB(17, 14, 17, 6),
++            child: Text(
++              label.toUpperCase(),
++              style: BovaraText.label(size: 11, color: BovaraColors.textMuted)
++                  .copyWith(letterSpacing: 1.1, fontWeight: FontWeight.w800),
+             ),
+           ),
+-          const SizedBox(height: 16),
+-          _buildListOption(
+-            icon: Icons.code,
+-            iconColor: const Color(0xFF3B82F6),
+-            iconBgColor: const Color(0xFFDBEAFE),
+-            title: 'Exportar como JSON',
+-            onTap: () {
+-              // TODO: exportar JSON
+-            },
+-          ),
+-          _buildListOption(
+-            icon: Icons.description_outlined,
+-            iconColor: const Color(0xFF388E3C),
+-            iconBgColor: const Color(0xFFC8E6C9),
+-            title: 'Exportar como CSV',
+-            onTap: () {
+-              // TODO: exportar CSV
+-            },
+-          ),
+-        ],
+-      ),
+-    );
+-  }
+-
+-  Widget _buildOtherOptionsSection() {
+-    return Container(
+-      width: double.infinity,
+-      padding: const EdgeInsets.all(24),
+-      child: Column(
+-        children: [
+-          _buildListOption(
+-            icon: Icons.shield_outlined,
+-            iconColor: const Color(0xFF616161),
+-            iconBgColor: const Color(0xFFF3F4F6),
+-            title: 'Política de Privacidad',
+-            onTap: () {},
+-          ),
+-          _buildListOption(
+-            icon: Icons.description_outlined,
+-            iconColor: const Color(0xFF616161),
+-            iconBgColor: const Color(0xFFF3F4F6),
+-            title: 'Términos de Servicio',
+-            onTap: () {},
+-          ),
+-          _buildListOption(
+-            icon: Icons.history,
+-            iconColor: const Color(0xFF616161),
+-            iconBgColor: const Color(0xFFF3F4F6),
+-            title: 'Ver Registros de Auditoría',
+-            onTap: () {},
+-          ),
++          ...children,
+         ],
+       ),
+     );
+   }
++}
+ 
+-  // -------------------- Helpers de UI --------------------
++// ═════════════════════════════════════════════════════════════════
++// ROWS
++// ═════════════════════════════════════════════════════════════════
+ 
+-  Widget _buildToggleOption({
+-    required String title,
+-    required String description,
+-    required bool value,
+-    required ValueChanged<bool> onChanged,
+-  }) {
+-    return Row(
+-      crossAxisAlignment: CrossAxisAlignment.start,
+-      children: [
+-        Expanded(
+-          child: Column(
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              Text(
+-                title,
+-                style: const TextStyle(
+-                  fontSize: 16,
+-                  fontWeight: FontWeight.w500,
+-                  color: Color(0xFF222222),
+-                  height: 1.5,
+-                ),
+-              ),
+-              const SizedBox(height: 4),
+-              Text(
+-                description,
+-                style: const TextStyle(
+-                  fontSize: 14,
+-                  fontWeight: FontWeight.w400,
+-                  color: Color(0xFF616161),
+-                  height: 1.4,
+-                ),
+-              ),
+-            ],
+-          ),
+-        ),
+-        const SizedBox(width: 16),
+-        _CustomSwitch(
+-          value: value,
+-          onChanged: onChanged,
+-        ),
+-      ],
+-    );
+-  }
++class _ToggleRow extends StatelessWidget {
++  final IconData icon;
++  final Color iconBg;
++  final Color iconFg;
++  final String title;
++  final String subtitle;
++  final bool value;
++  final ValueChanged<bool> onChanged;
+ 
+-  Widget _buildRadioOption({
+-    required String title,
+-    required String description,
+-    required SyncMode value,
+-    required SyncMode groupValue,
+-    required ValueChanged<SyncMode?> onChanged,
+-    bool isLast = false,
+-  }) {
+-    final isSelected = value == groupValue;
++  const _ToggleRow({
++    required this.icon,
++    required this.iconBg,
++    required this.iconFg,
++    required this.title,
++    required this.subtitle,
++    required this.value,
++    required this.onChanged,
++  });
+ 
+-    return InkWell(
+-      onTap: () => onChanged(value),
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
+       child: Row(
+-        crossAxisAlignment: CrossAxisAlignment.start,
+         children: [
+           Container(
+-            width: 24,
+-            height: 24,
+-            decoration: BoxDecoration(
+-              shape: BoxShape.circle,
+-              border: Border.all(
+-                color: isSelected
+-                    ? const Color(0xFF2E7D32)
+-                    : const Color(0xFFD1D5DB),
+-                width: isSelected ? 8 : 2,
+-              ),
+-            ),
++            width: 38,
++            height: 38,
++            decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(12)),
++            child: Icon(icon, size: 17, color: iconFg),
+           ),
+-          const SizedBox(width: 16),
++          const SizedBox(width: 13),
+           Expanded(
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+-                Text(
+-                  title,
+-                  style: const TextStyle(
+-                    fontSize: 16,
+-                    fontWeight: FontWeight.w500,
+-                    color: Color(0xFF222222),
+-                  ),
+-                ),
+-                const SizedBox(height: 4),
+-                Text(
+-                  description,
+-                  style: const TextStyle(
+-                    fontSize: 14,
+-                    fontWeight: FontWeight.w400,
+-                    color: Color(0xFF616161),
+-                    height: 1.4,
+-                  ),
+-                ),
++                Text(title,
++                    style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
++                        .copyWith(fontWeight: FontWeight.w700)),
++                const SizedBox(height: 1),
++                Text(subtitle,
++                    style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted)),
+               ],
+             ),
+           ),
++          Switch.adaptive(
++            value: value,
++            onChanged: onChanged,
++            activeColor: BovaraColors.primary,
++          ),
+         ],
+       ),
+     );
+   }
++}
+ 
+-  Widget _buildPermissionOption({
+-    required IconData icon,
+-    required Color iconColor,
+-    required Color iconBgColor,
+-    required String title,
+-    required String description,
+-    required bool value,
+-    required ValueChanged<bool> onChanged,
+-  }) {
+-    return Row(
+-      children: [
+-        Container(
+-          width: 48,
+-          height: 48,
+-          decoration: BoxDecoration(
+-            color: iconBgColor,
+-            shape: BoxShape.circle,
+-          ),
+-          child: Icon(
+-            icon,
+-            color: iconColor,
+-            size: 20,
+-          ),
+-        ),
+-        const SizedBox(width: 16),
+-        Expanded(
+-          child: Column(
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              Text(
+-                title,
+-                style: const TextStyle(
+-                  fontSize: 16,
+-                  fontWeight: FontWeight.w500,
+-                  color: Color(0xFF222222),
+-                ),
+-              ),
+-              const SizedBox(height: 2),
+-              Text(
+-                description,
+-                style: const TextStyle(
+-                  fontSize: 14,
+-                  fontWeight: FontWeight.w400,
+-                  color: Color(0xFF616161),
+-                  height: 1.4,
+-                ),
+-              ),
+-            ],
+-          ),
+-        ),
+-        const SizedBox(width: 16),
+-        _CustomSwitch(
+-          value: value,
+-          onChanged: onChanged,
+-        ),
+-      ],
+-    );
+-  }
++class _ActionRow extends StatelessWidget {
++  final IconData icon;
++  final Color iconBg;
++  final Color iconFg;
++  final String title;
++  final String subtitle;
++  final String? actionLabel;
++  final Color? titleColor;
++  final VoidCallback onTap;
++  final bool isLast;
++  final bool showChevron;
++
++  const _ActionRow({
++    required this.icon,
++    required this.iconBg,
++    required this.iconFg,
++    required this.title,
++    required this.subtitle,
++    required this.onTap,
++    this.actionLabel,
++    this.titleColor,
++    this.isLast = false,
++    this.showChevron = true,
++  });
+ 
+-  Widget _buildListOption({
+-    required IconData icon,
+-    required Color iconColor,
+-    required Color iconBgColor,
+-    required String title,
+-    required VoidCallback onTap,
+-  }) {
++  @override
++  Widget build(BuildContext context) {
+     return InkWell(
+       onTap: onTap,
+-      child: Padding(
+-        padding: const EdgeInsets.symmetric(vertical: 16),
++      child: Container(
++        padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
++        decoration: BoxDecoration(
++          border: isLast
++              ? null
++              : const Border(
++                  bottom: BorderSide(color: Color(0xFFF6F7F2), width: 1),
++                ),
++        ),
+         child: Row(
+           children: [
+             Container(
+-              width: 40,
+-              height: 40,
+-              decoration: BoxDecoration(
+-                color: iconBgColor,
+-                shape: BoxShape.circle,
+-              ),
+-              child: Icon(
+-                icon,
+-                color: iconColor,
+-                size: 18,
+-              ),
++              width: 38,
++              height: 38,
++              decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(12)),
++              child: Icon(icon, size: 17, color: iconFg),
+             ),
+-            const SizedBox(width: 16),
++            const SizedBox(width: 13),
+             Expanded(
+-              child: Text(
+-                title,
+-                style: const TextStyle(
+-                  fontSize: 16,
+-                  fontWeight: FontWeight.w500,
+-                  color: Color(0xFF222222),
+-                ),
++              child: Column(
++                crossAxisAlignment: CrossAxisAlignment.start,
++                children: [
++                  Text(title,
++                      style: BovaraText.body(
++                        size: 14,
++                        color: titleColor ?? BovaraColors.textPrimary,
++                      ).copyWith(fontWeight: FontWeight.w700)),
++                  const SizedBox(height: 1),
++                  Text(subtitle,
++                      style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted)),
++                ],
+               ),
+             ),
+-            const Icon(
+-              Icons.chevron_right,
+-              color: Color(0xFF616161),
+-              size: 20,
+-            ),
++            if (actionLabel != null)
++              Text(actionLabel!,
++                  style: BovaraText.label(size: 12, color: BovaraColors.primary))
++            else if (showChevron)
++              const Icon(Icons.chevron_right, size: 18, color: BovaraColors.textDisabled),
+           ],
+         ),
+       ),
+@@ -614,61 +418,116 @@ class _PrivacySecurityPageState extends State<PrivacySecurityPage> {
+   }
+ }
+ 
+-// -------------------- Switch custom --------------------
+-
+-class _CustomSwitch extends StatelessWidget {
+-  final bool value;
+-  final ValueChanged<bool> onChanged;
++class _StaticRow extends StatelessWidget {
++  final IconData icon;
++  final Color iconBg;
++  final Color iconFg;
++  final String title;
++  final String subtitle;
++  final Color? subtitleColor;
+ 
+-  const _CustomSwitch({
+-    required this.value,
+-    required this.onChanged,
++  const _StaticRow({
++    required this.icon,
++    required this.iconBg,
++    required this.iconFg,
++    required this.title,
++    required this.subtitle,
++    this.subtitleColor,
+   });
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
+-      onTap: () => onChanged(!value),
+-      child: Container(
+-        width: 56,
+-        height: 32,
+-        decoration: BoxDecoration(
+-          color: value ? const Color(0xFF2E7D32) : const Color(0xFFD1D5DB),
+-          borderRadius: BorderRadius.circular(9999),
+-        ),
+-        child: AnimatedAlign(
+-          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+-          duration: const Duration(milliseconds: 200),
+-          curve: Curves.easeInOut,
+-          child: Container(
+-            margin: const EdgeInsets.all(4),
+-            width: 24,
+-            height: 24,
+-            decoration: BoxDecoration(
+-              color: Colors.white,
+-              shape: BoxShape.circle,
+-              boxShadow: [
+-                BoxShadow(
+-                  color: Colors.black.withOpacity(0.1),
+-                  blurRadius: 4,
+-                  offset: const Offset(0, 2),
+-                ),
+-                BoxShadow(
+-                  color: Colors.black.withOpacity(0.1),
+-                  blurRadius: 6,
+-                  offset: const Offset(0, 4),
+-                ),
++    return Container(
++      padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
++      decoration: const BoxDecoration(
++        border: Border(bottom: BorderSide(color: Color(0xFFF6F7F2), width: 1)),
++      ),
++      child: Row(
++        children: [
++          Container(
++            width: 38,
++            height: 38,
++            decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(12)),
++            child: Icon(icon, size: 17, color: iconFg),
++          ),
++          const SizedBox(width: 13),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text(title,
++                    style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
++                        .copyWith(fontWeight: FontWeight.w700)),
++                const SizedBox(height: 1),
++                Text(subtitle,
++                    style: BovaraText.label(
++                      size: 11.5,
++                      color: subtitleColor ?? BovaraColors.textMuted,
++                    ).copyWith(fontWeight: subtitleColor != null ? FontWeight.w700 : FontWeight.w500)),
+               ],
+             ),
+           ),
+-        ),
++        ],
+       ),
+     );
+   }
+ }
+ 
+-enum SyncMode {
+-  wifiOnly,
+-  always,
+-  manual,
++class _MemberRow extends StatelessWidget {
++  final String initials;
++  final Color initialsBg;
++  final Color initialsFg;
++  final String name;
++  final String permissions;
++  final bool isLast;
++
++  const _MemberRow({
++    required this.initials,
++    required this.initialsBg,
++    required this.initialsFg,
++    required this.name,
++    required this.permissions,
++    this.isLast = false,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
++      decoration: BoxDecoration(
++        border: isLast
++            ? null
++            : const Border(bottom: BorderSide(color: Color(0xFFF6F7F2), width: 1)),
++      ),
++      child: Row(
++        children: [
++          Container(
++            width: 38,
++            height: 38,
++            decoration: BoxDecoration(color: initialsBg, shape: BoxShape.circle),
++            alignment: Alignment.center,
++            child: Text(initials,
++                style: BovaraText.label(size: 13, color: initialsFg)
++                    .copyWith(fontWeight: FontWeight.w800)),
++          ),
++          const SizedBox(width: 13),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text(name,
++                    style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
++                        .copyWith(fontWeight: FontWeight.w700)),
++                const SizedBox(height: 1),
++                Text(permissions,
++                    style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted)),
++              ],
++            ),
++          ),
++          Text('Editar',
++              style: BovaraText.label(size: 12, color: BovaraColors.primary)),
++        ],
++      ),
++    );
++  }
+ }

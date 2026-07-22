@@ -1,0 +1,144 @@
+diff --git a/lib/features/notifications/data/services/reminder_service.dart b/lib/features/notifications/data/services/reminder_service.dart
+index 05b97ad..448d66a 100644
+--- a/lib/features/notifications/data/services/reminder_service.dart
++++ b/lib/features/notifications/data/services/reminder_service.dart
+@@ -88,8 +88,7 @@ class ReminderService {
+   }) async {
+     final body = jsonEncode({
+       'title': title,
+-      'reminder_date': _fmt(reminderDate),
+-      'reminder_type': type.api,
++      'reminder_date': reminderDate.toIso8601String(),
+       if (description != null && description.isNotEmpty)
+         'description': description,
+       if (cattleId != null) 'cattle_id': cattleId,
+@@ -115,7 +114,7 @@ class ReminderService {
+     final payload = <String, dynamic>{
+       if (title != null) 'title': title,
+       if (description != null) 'description': description,
+-      if (reminderDate != null) 'reminder_date': _fmt(reminderDate),
++      if (reminderDate != null) 'reminder_date': reminderDate.toIso8601String(),
+       if (type != null) 'reminder_type': type.api,
+       if (status != null) 'status': status.api,
+       if (cattleId != null) 'cattle_id': cattleId,
+diff --git a/lib/features/notifications/presentation/pages/reminders_page.dart b/lib/features/notifications/presentation/pages/reminders_page.dart
+index 650fed9..436faf1 100644
+--- a/lib/features/notifications/presentation/pages/reminders_page.dart
++++ b/lib/features/notifications/presentation/pages/reminders_page.dart
+@@ -683,7 +683,26 @@ class _NewReminderSheetState extends State<_NewReminderSheet> {
+       firstDate: DateTime.now().subtract(const Duration(days: 30)),
+       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+     );
+-    if (d != null) setState(() => _date = d);
++    if (d != null) {
++      setState(() => _date = DateTime(d.year, d.month, d.day, _date.hour, _date.minute));
++    }
++  }
++
++  Future<void> _pickTime() async {
++    final t = await showTimePicker(
++      context: context,
++      initialTime: TimeOfDay.fromDateTime(_date),
++    );
++    if (t != null) {
++      setState(() => _date = DateTime(_date.year, _date.month, _date.day, t.hour, t.minute));
++    }
++  }
++
++  String _formatTime(DateTime d) {
++    final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
++    final m = d.minute.toString().padLeft(2, '0');
++    final ampm = d.hour < 12 ? 'AM' : 'PM';
++    return '$h:$m $ampm';
+   }
+ 
+   Future<void> _save() async {
+@@ -786,26 +805,70 @@ class _NewReminderSheetState extends State<_NewReminderSheet> {
+                   }).toList(),
+                 ),
+                 const SizedBox(height: 12),
+-                _Label('Fecha'),
+-                InkWell(
+-                  onTap: _pickDate,
+-                  borderRadius: BorderRadius.circular(12),
+-                  child: Container(
+-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+-                    decoration: BoxDecoration(
+-                      color: BovaraColors.surfaceAlt,
+-                      borderRadius: BorderRadius.circular(12),
++                Row(
++                  crossAxisAlignment: CrossAxisAlignment.start,
++                  children: [
++                    Expanded(
++                      child: Column(
++                        crossAxisAlignment: CrossAxisAlignment.start,
++                        children: [
++                          _Label('Fecha'),
++                          InkWell(
++                            onTap: _pickDate,
++                            borderRadius: BorderRadius.circular(12),
++                            child: Container(
++                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
++                              decoration: BoxDecoration(
++                                color: BovaraColors.surfaceAlt,
++                                borderRadius: BorderRadius.circular(12),
++                              ),
++                              child: Row(
++                                children: [
++                                  const Icon(Icons.calendar_today,
++                                      size: 15, color: BovaraColors.textMuted),
++                                  const SizedBox(width: 10),
++                                  Flexible(
++                                    child: Text(_formatFullDate(_date),
++                                        overflow: TextOverflow.ellipsis,
++                                        style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)),
++                                  ),
++                                ],
++                              ),
++                            ),
++                          ),
++                        ],
++                      ),
+                     ),
+-                    child: Row(
+-                      children: [
+-                        const Icon(Icons.calendar_today,
+-                            size: 15, color: BovaraColors.textMuted),
+-                        const SizedBox(width: 10),
+-                        Text(_formatFullDate(_date),
+-                            style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)),
+-                      ],
++                    const SizedBox(width: 10),
++                    Expanded(
++                      child: Column(
++                        crossAxisAlignment: CrossAxisAlignment.start,
++                        children: [
++                          _Label('Hora'),
++                          InkWell(
++                            onTap: _pickTime,
++                            borderRadius: BorderRadius.circular(12),
++                            child: Container(
++                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
++                              decoration: BoxDecoration(
++                                color: BovaraColors.surfaceAlt,
++                                borderRadius: BorderRadius.circular(12),
++                              ),
++                              child: Row(
++                                children: [
++                                  const Icon(Icons.access_time,
++                                      size: 15, color: BovaraColors.textMuted),
++                                  const SizedBox(width: 10),
++                                  Text(_formatTime(_date),
++                                      style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)),
++                                ],
++                              ),
++                            ),
++                          ),
++                        ],
++                      ),
+                     ),
+-                  ),
++                  ],
+                 ),
+                 const SizedBox(height: 12),
+                 _Label('Notas (opcional)'),

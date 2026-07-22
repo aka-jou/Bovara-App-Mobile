@@ -1,25 +1,37 @@
 import 'package:go_router/go_router.dart';
 
 // OJO con los paths: estamos dentro de lib/core/router/
+import '../../features/auth/presentation/pages/auth_gate.dart';
+import '../../features/onboarding/presentation/pages/onboarding_page.dart';
 import '../../features/auth/presentation/pages/welcome_page.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/pages/signup_page.dart';
 import '../../features/home/presentation/pages/dashboard_page.dart';
 import '../../features/profile/presentation/pages/account_page.dart';
 import '../../features/notifications/presentation/pages/reminders_page.dart';
+import '../../features/notifications/presentation/pages/calendar_page.dart';
 import '../../features/profile/presentation/pages/privacy_security_page.dart';
 import '../../features/cattle/presentation/pages/cattle_list_page.dart';
+import '../../features/cattle/presentation/pages/cattle_new_page.dart';
 import '../../features/assistant/presentation/pages/assistant_chat_page.dart';
 import '../../features/notifications/presentation/pages/notifications_page.dart';
 import '../../features/cattle/presentation/pages/cattle_detail_page.dart';
 import '../../features/cattle/presentation/pages/cattle_zeal_page.dart';
 import '../../features/cattle/presentation/pages/cattle_vaccine_page.dart';
-import '../../features/cattle/data/models/cattle_model.dart'; //
+import '../../features/cattle/data/models/cattle_model.dart';
 
 final appRouter = GoRouter(
-  initialLocation: '/welcome',
+  initialLocation: '/splash',
 
   routes: [
+    GoRoute(
+      path: '/splash',
+      builder: (context, state) => const AuthGate(),
+    ),
+    GoRoute(
+      path: '/onboarding',
+      builder: (context, state) => const OnboardingPage(),
+    ),
     GoRoute(
       path: '/welcome',
       builder: (context, state) => const WelcomePage(),
@@ -41,6 +53,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const RemindersPage(),
     ),
     GoRoute(
+      path: '/calendar',
+      builder: (context, state) => const CalendarPage(),
+    ),
+    GoRoute(
       path: '/account',
       builder: (context, state) => const AccountPage(),
     ),
@@ -53,6 +69,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const CattleListPage(),
     ),
     GoRoute(
+      path: '/cattle/new',
+      builder: (context, state) => const CattleNewPage(),
+    ),
+    GoRoute(
       path: '/assistant',
       builder: (context, state) => const AssistantChatPage(),
     ),
@@ -61,15 +81,14 @@ final appRouter = GoRouter(
       builder: (context, state) => const NotificationsPage(),
     ),
 
-    // ✅ RUTA MODIFICADA: Ahora acepta datos extra
     GoRoute(
       path: '/cattle/:id',
       builder: (context, state) {
         final cattleId = state.pathParameters['id']!;
-        final cattle = state.extra as CattleModel?; // ✅ Cambiar tipo
+        final cattle = state.extra as CattleModel?;
         return CattleDetailPage(
           cattleId: cattleId,
-          cattle: cattle, // ✅ Ahora coincide el tipo
+          preloaded: cattle,
         );
       },
     ),

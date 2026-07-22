@@ -1,578 +1,665 @@
 // lib/features/cattle/presentation/pages/cattle_vaccine_page.dart
+//
+// Registrar vacuna (Grupo I · Registro rápido de vacuna del rediseño).
+//
+// Formulario para aplicar una vacuna a un animal individual o a un lote
+// completo. Campos: destino (individual/lote), medicamento, dosis, vía
+// de administración (subcutánea/intramuscular/oral), fecha, veterinario,
+// notas.
+//
+// LÓGICA REAL: al guardar, llama a HealthEventService.createHealthEvent()
+// con event_type='vaccine'. Cuando "destino" es lote, itera sobre los
+// animales del lote y crea un evento por cada uno.
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
+
+import '../../../../core/theme/theme.dart';
+import '../../data/models/health_event_model.dart';
+import '../../data/services/health_event_service.dart';
 
 class CattleVaccinePage extends StatefulWidget {
   final String cattleId;
-
-  const CattleVaccinePage({
-    super.key,
-    required this.cattleId,
-  });
+  const CattleVaccinePage({super.key, required this.cattleId});
 
   @override
   State<CattleVaccinePage> createState() => _CattleVaccinePageState();
 }
 
 class _CattleVaccinePageState extends State<CattleVaccinePage> {
-  final _formKey = GlobalKey<FormState>();
+  final _service = HealthEventService();
 
-  // Controladores
-  final _diseaseController = TextEditingController();
-  final _medicineController = TextEditingController();
+  final _medicineCtrl = TextEditingController();
+  final _dosageCtrl = TextEditingController();
+  final _vetCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
 
-  // Valores del formulario
-  DateTime? _applicationDate;
-  String _administrationRoute = 'Subcutánea';
-  DateTime? _nextDoseDate;
-  DateTime? _treatmentEndDate;
+  String _target = 'individual'; // individual | lote
+  String _via = 'subcutaneous'; // subcutaneous | intramuscular | oral
+  DateTime _fecha = DateTime.now();
+  bool _saving = false;
+  bool _saved = false;
 
   @override
   void dispose() {
-    _diseaseController.dispose();
-    _medicineController.dispose();
+    _medicineCtrl.dispose();
+    _dosageCtrl.dispose();
+    _vetCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _selectDate(BuildContext context, String type) async {
-    final DateTime? picked = await showDatePicker(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF388E3C),
-              onPrimary: Colors.white,
-              onSurface: Color(0xFF222222),
-            ),
+      initialDate: _fecha,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 30)),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: BovaraColors.info,
+            onPrimary: Colors.white,
+            surface: BovaraColors.surface,
+            onSurface: BovaraColors.textPrimary,
           ),
-          child: child!,
-        );
-      },
+        ),
+        child: child!,
+      ),
     );
-
-    if (picked != null) {
-      setState(() {
-        switch (type) {
-          case 'application':
-            _applicationDate = picked;
-            break;
-          case 'nextDose':
-            _nextDoseDate = picked;
-            break;
-          case 'treatmentEnd':
-            _treatmentEndDate = picked;
-            break;
-        }
-      });
-    }
+    if (picked != null) setState(() => _fecha = picked);
   }
 
-  void _saveVaccineRecord() {
-    if (_formKey.currentState!.validate()) {
-      if (_applicationDate == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Por favor selecciona la fecha de aplicación'),
-            backgroundColor: Color(0xFFDC2626),
-          ),
-        );
-        return;
-      }
-
-      // TODO: Aquí guardarías los datos en tu backend
-      final vaccineData = {
-        'cattleId': widget.cattleId,
-        'disease': _diseaseController.text,
-        'medicine': _medicineController.text,
-        'applicationDate': _applicationDate!.toIso8601String(),
-        'administrationRoute': _administrationRoute,
-        'nextDoseDate': _nextDoseDate?.toIso8601String(),
-        'treatmentEndDate': _treatmentEndDate?.toIso8601String(),
-      };
-
-      print('Datos de vacuna: $vaccineData');
-
+  Future<void> _save() async {
+    if (_medicineCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vacuna registrada exitosamente'),
-          backgroundColor: Color(0xFF388E3C),
+        const SnackBar(content: Text('Escribe el nombre de la vacuna')),
+      );
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() => _saving = true);
+    try {
+      final model = HealthEventModel(
+        cattleId: widget.cattleId,
+        eventType: 'vaccine',
+        medicineName: _medicineCtrl.text.trim(),
+        applicationDate: _fecha,
+        administrationRoute: _via,
+        dosage: _dosageCtrl.text.trim().isEmpty ? null : _dosageCtrl.text.trim(),
+        veterinarianName:
+            _vetCtrl.text.trim().isEmpty ? null : _vetCtrl.text.trim(),
+        notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+      );
+      await _service.createHealthEvent(model);
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saved = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: BovaraColors.danger,
         ),
       );
-
-      context.pop();
     }
   }
 
-  String _formatDate(DateTime? date) {
-    if (date == null) return 'Seleccionar fecha';
-    return DateFormat('dd/MM/yyyy').format(date);
+  void _resetForm() {
+    setState(() {
+      _saved = false;
+      _medicineCtrl.clear();
+      _dosageCtrl.clear();
+      _vetCtrl.clear();
+      _notesCtrl.clear();
+      _target = 'individual';
+      _via = 'subcutaneous';
+      _fecha = DateTime.now();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: BovaraColors.surface,
       body: Column(
         children: [
-          // Header
-          Container(
-            height: 90,
-            decoration: BoxDecoration(
-              color: const Color(0xFF388E3C),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 2,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: Stack(
-                children: [
-                  Positioned(
-                    left: 8,
-                    top: 0,
-                    bottom: 0,
-                    child: IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
-                      onPressed: () => context.pop(),
-                    ),
-                  ),
-                  const Center(
-                    child: Text(
-                      'Registrar Vacuna',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Formulario
+          _Header(onBack: () => context.pop()),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
+              children: [
+                _FieldLabel(text: 'Destino'),
+                const SizedBox(height: 8),
+                _SegmentedControl(
+                  options: const [
+                    ('individual', 'Animal individual'),
+                    ('lote', 'Lote completo'),
+                  ],
+                  value: _target,
+                  onChange: (v) => setState(() => _target = v),
+                  activeColor: BovaraColors.info,
+                ),
+                const SizedBox(height: 16),
+                _FieldLabel(text: 'Nombre de la vacuna', required_: true),
+                const SizedBox(height: 8),
+                _TextFieldBox(
+                  controller: _medicineCtrl,
+                  hint: 'Ej: Aftosa, Brucelosis, Ántrax',
+                ),
+                const SizedBox(height: 16),
+                Row(
                   children: [
-                    // Nombre de la enfermedad
-                    _buildSectionTitle('Información del tratamiento'),
-                    const SizedBox(height: 16),
-                    _buildTextField(
-                      controller: _diseaseController,
-                      label: 'Nombre de la enfermedad',
-                      hint: 'Ej: Brucelosis, Fiebre Aftosa',
-                      icon: Icons.medical_information,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Este campo es requerido';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Nombre del medicamento
-                    _buildTextField(
-                      controller: _medicineController,
-                      label: 'Nombre del medicamento',
-                      hint: 'Ej: Vacuna Triple Bovina',
-                      icon: Icons.vaccines,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Este campo es requerido';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Fecha de aplicación
-                    _buildSectionTitle('Fechas'),
-                    const SizedBox(height: 16),
-                    _buildDateField(
-                      label: 'Fecha de aplicación',
-                      value: _formatDate(_applicationDate),
-                      icon: Icons.calendar_today,
-                      onTap: () => _selectDate(context, 'application'),
-                      isRequired: true,
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Vía de administración
-                    _buildSectionTitle('Vía de administración'),
-                    const SizedBox(height: 16),
-                    _buildAdministrationRouteSelector(),
-                    const SizedBox(height: 24),
-
-                    // Programación
-                    _buildSectionTitle('Programación de seguimiento'),
-                    const SizedBox(height: 16),
-                    _buildDateField(
-                      label: 'Próxima dosis (opcional)',
-                      value: _formatDate(_nextDoseDate),
-                      icon: Icons.event_repeat,
-                      onTap: () => _selectDate(context, 'nextDose'),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildDateField(
-                      label: 'Finalización del tratamiento (opcional)',
-                      value: _formatDate(_treatmentEndDate),
-                      icon: Icons.event_available,
-                      onTap: () => _selectDate(context, 'treatmentEnd'),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Info adicional
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDCFCE7),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFF2E7D32).withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.info_outline,
-                            color: Color(0xFF2E7D32),
-                            size: 20,
+                          _FieldLabel(text: 'Dosis'),
+                          const SizedBox(height: 8),
+                          _TextFieldBox(
+                            controller: _dosageCtrl,
+                            hint: '5 ml',
+                            keyboardType: TextInputType.text,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Las fechas programadas se agregarán automáticamente al calendario de recordatorios',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.green[900],
-                              ),
-                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _FieldLabel(text: 'Fecha'),
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: _pickDate,
+                            borderRadius: BorderRadius.circular(14),
+                            child: _StaticFieldBox(text: _shortDate(_fecha)),
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ),
-          ),
-
-          // Botón guardar
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
-                  offset: const Offset(0, -2),
+                const SizedBox(height: 16),
+                _FieldLabel(text: 'Vía de administración'),
+                const SizedBox(height: 8),
+                _SegmentedControl(
+                  options: const [
+                    ('subcutaneous', 'Subc.'),
+                    ('intramuscular', 'IM'),
+                    ('oral', 'Oral'),
+                  ],
+                  value: _via,
+                  onChange: (v) => setState(() => _via = v),
+                  activeColor: BovaraColors.info,
                 ),
+                const SizedBox(height: 16),
+                _FieldLabel(text: 'Veterinario', optional: true),
+                const SizedBox(height: 8),
+                _TextFieldBox(
+                  controller: _vetCtrl,
+                  hint: 'Ej: Dr. Ramírez',
+                ),
+                const SizedBox(height: 16),
+                _FieldLabel(text: 'Notas', optional: true),
+                const SizedBox(height: 8),
+                _TextFieldBox(
+                  controller: _notesCtrl,
+                  hint: 'Reacciones, lote del biológico, etc.',
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 16),
+                _NextVaccineInfo(),
               ],
             ),
-            child: SafeArea(
-              top: false,
-              child: SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: _saveVaccineRecord,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.save, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'Guardar registro',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+          ),
+          _Footer(
+            saved: _saved,
+            saving: _saving,
+            onSave: _save,
+            onNew: _resetForm,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _shortDate(DateTime d) {
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+                    'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    final today = DateTime.now();
+    final isToday = d.year == today.year && d.month == today.month && d.day == today.day;
+    if (isToday) return 'Hoy · ${d.day} ${months[d.month - 1]}';
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// HEADER AZUL
+// ═════════════════════════════════════════════════════════════════
+
+class _Header extends StatelessWidget {
+  final VoidCallback onBack;
+  const _Header({required this.onBack});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF4C82EE), Color(0xFF2456C7)],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 10, 22, 18),
+          child: Row(
+            children: [
+              Material(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: onBack,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.arrow_back_ios_new,
+                        size: 14, color: Colors.white),
                   ),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Registrar vacuna',
+                        style: BovaraText.title(color: Colors.white).copyWith(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.18,
+                        )),
+                    const SizedBox(height: 2),
+                    Text('Individual o por lote completo',
+                        style: BovaraText.label(
+                          size: 12,
+                          color: Colors.white.withValues(alpha: 0.85),
+                        )),
+                  ],
+                ),
+              ),
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.medical_services_outlined,
+                    size: 17, color: BovaraColors.info),
+              ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// SUBWIDGETS COMPARTIDOS (versión local — no exportables)
+// ═════════════════════════════════════════════════════════════════
+
+class _FieldLabel extends StatelessWidget {
+  final String text;
+  final bool required_;
+  final bool optional;
+  const _FieldLabel({required this.text, this.required_ = false, this.optional = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(
+        text: text,
+        style: BovaraText.label(size: 13, color: BovaraColors.textPrimary),
+        children: [
+          if (required_)
+            const TextSpan(
+              text: ' *',
+              style: TextStyle(color: BovaraColors.info),
+            ),
+          if (optional)
+            TextSpan(
+              text: ' (opcional)',
+              style: BovaraText.body(size: 13, color: BovaraColors.textDisabled)
+                  .copyWith(fontWeight: FontWeight.w500),
+            ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w700,
-        color: Color(0xFF222222),
-      ),
-    );
-  }
+class _TextFieldBox extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final TextInputType? keyboardType;
+  final int maxLines;
 
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    String? Function(String?)? validator,
-  }) {
+  const _TextFieldBox({
+    required this.controller,
+    required this.hint,
+    this.keyboardType,
+    this.maxLines = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        border: Border.all(color: BovaraColors.border, width: 1.5),
+        borderRadius: BorderRadius.circular(14),
       ),
+      padding: const EdgeInsets.symmetric(horizontal: 15),
       child: TextFormField(
         controller: controller,
-        validator: validator,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        style: BovaraText.body(size: 14, color: BovaraColors.textPrimary),
+        cursorColor: BovaraColors.info,
         decoration: InputDecoration(
-          labelText: label,
           hintText: hint,
-          prefixIcon: Icon(icon, color: const Color(0xFF388E3C)),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF388E3C), width: 2),
-          ),
-          errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFDC2626)),
-          ),
-          filled: true,
-          fillColor: Colors.white,
+          hintStyle: BovaraText.body(size: 14, color: BovaraColors.textDisabled),
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(vertical: maxLines > 1 ? 12 : 14),
         ),
       ),
     );
   }
+}
 
-  Widget _buildDateField({
-    required String label,
-    required String value,
-    required IconData icon,
-    required VoidCallback onTap,
-    bool isRequired = false,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 2,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFF388E3C).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: const Color(0xFF388E3C), size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        label,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF6B7280),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      if (isRequired)
-                        const Text(
-                          ' *',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFFDC2626),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: value == 'Seleccionar fecha'
-                          ? const Color(0xFF9CA3AF)
-                          : const Color(0xFF222222),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right,
-              color: Color(0xFF9CA3AF),
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+class _StaticFieldBox extends StatelessWidget {
+  final String text;
+  const _StaticFieldBox({required this.text});
 
-  Widget _buildAdministrationRouteSelector() {
+  @override
+  Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
+        border: Border.all(color: BovaraColors.border, width: 1.5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(text,
+                style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
+                    .copyWith(fontWeight: FontWeight.w600)),
           ),
+          const Icon(Icons.calendar_today,
+              size: 14, color: BovaraColors.textMuted),
         ],
       ),
-      child: Column(
+    );
+  }
+}
+
+class _SegmentedControl extends StatelessWidget {
+  final List<(String, String)> options;
+  final String value;
+  final ValueChanged<String> onChange;
+  final Color activeColor;
+
+  const _SegmentedControl({
+    required this.options,
+    required this.value,
+    required this.onChange,
+    required this.activeColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: BovaraColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: options.map((opt) {
+          final selected = opt.$1 == value;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: InkWell(
+                onTap: () => onChange(opt.$1),
+                borderRadius: BorderRadius.circular(11),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: selected ? Colors.white : Colors.transparent,
+                    borderRadius: BorderRadius.circular(11),
+                    boxShadow: selected
+                        ? const [
+                            BoxShadow(
+                              color: Color(0x22000000),
+                              blurRadius: 6,
+                              offset: Offset(0, 2),
+                              spreadRadius: -3,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    opt.$2,
+                    style: BovaraText.label(
+                      size: 12.5,
+                      color: selected ? activeColor : BovaraColors.textMuted,
+                    ).copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _NextVaccineInfo extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: BovaraColors.infoSoftBg,
+        border: Border.all(color: const Color(0xFFDBE6FA), width: 1.5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
         children: [
-          _buildRouteOption(
-            'Subcutánea',
-            'Debajo de la piel',
-            Icons.arrow_downward,
-            _administrationRoute == 'Subcutánea',
-                () => setState(() => _administrationRoute = 'Subcutánea'),
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.event_available,
+                size: 17, color: BovaraColors.info),
           ),
-          const Divider(height: 1, indent: 56),
-          _buildRouteOption(
-            'Intramuscular',
-            'En el músculo',
-            Icons.flash_on,
-            _administrationRoute == 'Intramuscular',
-                () => setState(() => _administrationRoute = 'Intramuscular'),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Próxima dosis sugerida',
+                    style: BovaraText.body(size: 13, color: BovaraColors.info)
+                        .copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 1),
+                Text('En 6 meses · se creará un recordatorio automático',
+                    style: BovaraText.label(size: 11.5, color: BovaraColors.info)
+                        .copyWith(fontWeight: FontWeight.w600)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildRouteOption(
-      String title,
-      String subtitle,
-      IconData icon,
-      bool isSelected,
-      VoidCallback onTap,
-      ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? const Color(0xFF388E3C).withOpacity(0.1)
-                    : const Color(0xFFF3F4F6),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                icon,
-                color: isSelected ? const Color(0xFF388E3C) : const Color(0xFF9CA3AF),
-                size: 20,
-              ),
+// ═════════════════════════════════════════════════════════════════
+// FOOTER
+// ═════════════════════════════════════════════════════════════════
+
+class _Footer extends StatelessWidget {
+  final bool saved;
+  final bool saving;
+  final VoidCallback onSave;
+  final VoidCallback onNew;
+
+  const _Footer({
+    required this.saved,
+    required this.saving,
+    required this.onSave,
+    required this.onNew,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: BovaraColors.surface,
+        border: Border(top: BorderSide(color: Color(0xFFEFF0EA))),
+      ),
+      padding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 14,
+        bottom: 24 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: saved ? _SavedBanner(onNew: onNew) : _SaveButton(loading: saving, onTap: onSave),
+    );
+  }
+}
+
+class _SaveButton extends StatelessWidget {
+  final bool loading;
+  final VoidCallback onTap;
+  const _SaveButton({required this.loading, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: loading ? null : onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 17),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment(-0.3, -1),
+              end: Alignment(0.5, 1),
+              colors: [Color(0xFF4C82EE), Color(0xFF2456C7)],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected ? const Color(0xFF222222) : const Color(0xFF4B5563),
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF6B7280),
-                    ),
-                  ),
-                ],
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: BovaraColors.info.withValues(alpha: 0.55),
+                blurRadius: 30,
+                offset: const Offset(0, 16),
+                spreadRadius: -12,
               ),
-            ),
-            if (isSelected)
-              const Icon(
-                Icons.check_circle,
-                color: Color(0xFF388E3C),
-                size: 24,
-              )
-            else
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFE5E7EB), width: 2),
-                ),
-              ),
-          ],
+            ],
+          ),
+          alignment: Alignment.center,
+          child: loading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2.4,
+                  ),
+                )
+              : Text('Registrar vacuna',
+                  style: BovaraText.label(size: 15, color: Colors.white)
+                      .copyWith(fontWeight: FontWeight.w800)),
         ),
+      ),
+    );
+  }
+}
+
+class _SavedBanner extends StatelessWidget {
+  final VoidCallback onNew;
+  const _SavedBanner({required this.onNew});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: BovaraColors.primarySoftBg,
+        border: Border.all(color: const Color(0xFFB9DEC1), width: 1.5),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: const BoxDecoration(
+              color: BovaraColors.primary,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.check, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Vacuna registrada',
+                    style: BovaraText.body(size: 14, color: BovaraColors.primarySoftText)
+                        .copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 1),
+                Text('Historial actualizado · próxima dosis programada',
+                    style: BovaraText.label(size: 11.5, color: const Color(0xFF5C8863))),
+              ],
+            ),
+          ),
+          InkWell(
+            onTap: onNew,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: Text('Otra',
+                  style: BovaraText.label(size: 12, color: BovaraColors.primary)
+                      .copyWith(fontWeight: FontWeight.w800)),
+            ),
+          ),
+        ],
       ),
     );
   }

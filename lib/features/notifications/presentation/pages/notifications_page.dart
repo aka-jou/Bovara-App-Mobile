@@ -1,6 +1,16 @@
+// lib/features/notifications/presentation/pages/notifications_page.dart
+//
+// Notificaciones — ahora con datos REALES del backend
+// (notifications-service). Una cuenta nueva ve la lista vacía hasta que
+// ocurre el primer evento (recordatorio próximo a vencer, etc). Tocar un
+// item marca como leído y navega a la sección correspondiente.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/theme/theme.dart';
+import '../../data/models/notification_log_model.dart';
+import '../../data/services/notification_log_service.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -10,477 +20,330 @@ class NotificationsPage extends StatefulWidget {
 }
 
 class _NotificationsPageState extends State<NotificationsPage> {
-  int selectedTabIndex = 0;
+  final _service = NotificationLogService();
+  List<NotificationLogModel> _items = [];
+  bool _loading = true;
+  String? _error;
 
-  final List<String> tabs = [
-    'Todos',
-    'Recordatorios',
-    'Alertas de datos',
-    'Sistema',
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
-  final List<NotificationItem> notifications = [
-    NotificationItem(
-      type: NotificationType.reminder,
-      title: 'Vacunar Lote A hoy a las 10:00',
-      description:
-      'Aplicar vacuna antiparasitaria a todos los animales del lote',
-      timestamp: 'Hoy, 8:30 AM',
-      isUnread: true,
-      icon: Icons.event,
-      color: const Color(0xFF2E7D32),
-      bgColor: const Color(0xFFA5D6A7),
-    ),
-    NotificationItem(
-      type: NotificationType.dataAlert,
-      title: 'Peso fuera de rango en Vaca 03',
-      description:
-      'El peso registrado (850 kg) es inusualmente alto. Verifica el dato',
-      timestamp: 'Hace 2 horas',
-      isUnread: false,
-      icon: Icons.warning,
-      color: const Color(0xFFD32F2F),
-      bgColor: const Color(0xFFFFCDD2),
-    ),
-    NotificationItem(
-      type: NotificationType.reminder,
-      title: 'Pesaje semanal Lote A pendiente',
-      description: 'Realizar pesaje antes de las 5:00 pm',
-      timestamp: 'Hoy, 7:00 AM',
-      isUnread: true,
-      icon: Icons.assignment,
-      color: const Color(0xFF2E7D32),
-      bgColor: const Color(0xFFA5D6A7),
-    ),
-    NotificationItem(
-      type: NotificationType.alert,
-      title: 'Registro incompleto en Lote C',
-      description: 'Falta peso en el último pesaje de Vaca 05',
-      timestamp: 'Ayer, 6:45 PM',
-      isUnread: false,
-      icon: Icons.error_outline,
-      color: const Color(0xFFF57C00),
-      bgColor: const Color(0xFFFFE0B2),
-    ),
-    NotificationItem(
-      type: NotificationType.system,
-      title: 'Sincronización completada correctamente',
-      description: 'Todos los datos fueron actualizados en la nube',
-      timestamp: 'Hace 30 minutos',
-      isUnread: false,
-      icon: Icons.cloud_done,
-      color: const Color(0xFF1976D2),
-      bgColor: const Color(0xFFBBDEFB),
-    ),
-    NotificationItem(
-      type: NotificationType.reminder,
-      title: 'Revisión veterinaria Lote D',
-      description: 'Chequeo mensual programado para mañana 9:00 AM',
-      timestamp: 'Hoy, 8:00 AM',
-      isUnread: false,
-      icon: Icons.edit,
-      color: const Color(0xFF2E7D32),
-      bgColor: const Color(0xFFA5D6A7),
-    ),
-    NotificationItem(
-      type: NotificationType.system,
-      title: 'No se pudo sincronizar con el servidor',
-      description: 'Revisa tu conexión a internet e intenta de nuevo',
-      timestamp: 'Hace 1 hora',
-      isUnread: false,
-      icon: Icons.wifi_off,
-      color: const Color(0xFFD32F2F),
-      bgColor: const Color(0xFFFFCDD2),
-    ),
-    NotificationItem(
-      type: NotificationType.alert,
-      title: 'Faltan registros de alimentación',
-      description:
-      'No hay registros de alimentación en el Lote B desde hace 3 días',
-      timestamp: 'Hace 6 horas',
-      isUnread: false,
-      icon: Icons.storage,
-      color: const Color(0xFFF57C00),
-      bgColor: const Color(0xFFFFE0B2),
-    ),
-  ];
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await _service.list();
+      if (!mounted) return;
+      setState(() {
+        _items = list;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'No pude cargar tus notificaciones.';
+        _loading = false;
+      });
+    }
+  }
+
+  int get _unreadCount => _items.where((n) => !n.isRead).length;
+
+  Future<void> _markAllRead() async {
+    setState(() {
+      _items = _items.map((n) => n.copyWith(isRead: true)).toList();
+    });
+    await _service.markAllRead();
+  }
+
+  Future<void> _onTapItem(NotificationLogModel n) async {
+    if (!n.isRead) {
+      setState(() {
+        _items = _items.map((x) => x.id == n.id ? x.copyWith(isRead: true) : x).toList();
+      });
+      _service.markRead(n.id);
+    }
+    if (!mounted) return;
+    switch (n.referenceType) {
+      case 'reminder':
+        context.push('/reminders');
+        break;
+      case 'cattle':
+        if (n.referenceId != null) context.push('/cattle/${n.referenceId}');
+        break;
+      default:
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
+      backgroundColor: BovaraColors.surfaceAlt,
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(),
-            _buildFilterTabs(),
-            _buildMarkAsReadButton(),
-            Expanded(
-              child: ListView.builder(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                itemCount: notifications.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 23),
-                    child: _buildNotificationCard(notifications[index]),
-                  );
-                },
-              ),
+            _Header(
+              unread: _unreadCount,
+              onBack: () => context.go('/home'),
+              onMarkAllRead: _unreadCount > 0 ? _markAllRead : null,
             ),
+            Expanded(child: _buildBody()),
           ],
         ),
       ),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Header / barra superior con back
-  // ---------------------------------------------------------------------------
-  Widget _buildHeader() {
-    return Container(
-      width: double.infinity,
-      height: 72,
-      decoration: const BoxDecoration(
-        color: Color(0xFF2E7D32),
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(color: BovaraColors.primary),
+      );
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off_outlined, size: 42, color: BovaraColors.textMuted),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center,
+                  style: BovaraText.body(size: 14, color: BovaraColors.textSecondary)),
+              const SizedBox(height: 14),
+              TextButton(
+                onPressed: _load,
+                child: Text('Reintentar',
+                    style: BovaraText.label(size: 13, color: BovaraColors.primary)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_items.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.notifications_none_rounded,
+                  size: 46, color: BovaraColors.textDisabled),
+              const SizedBox(height: 14),
+              Text('Sin notificaciones todavía',
+                  style: BovaraText.heading(color: BovaraColors.textSecondary)),
+              const SizedBox(height: 6),
+              Text(
+                'Aquí verás avisos de celos, vacunas y tareas\ncuando ocurran.',
+                textAlign: TextAlign.center,
+                style: BovaraText.label(size: 13, color: BovaraColors.textMuted),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      color: BovaraColors.primary,
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(22, 6, 22, 30),
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, i) => _NotifCard(
+          item: _items[i],
+          onTap: () => _onTapItem(_items[i]),
+        ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// HEADER
+// ═════════════════════════════════════════════════════════════════
+
+class _Header extends StatelessWidget {
+  final int unread;
+  final VoidCallback onBack;
+  final VoidCallback? onMarkAllRead;
+
+  const _Header({required this.unread, required this.onBack, required this.onMarkAllRead});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          IconButton(
-            // 👇 ahora sí regresa a la pantalla anterior
-            onPressed: () {
-              context.go('/home');
-            },
-            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
-            padding: EdgeInsets.zero,
-            constraints:
-            const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          const Text(
-            'Notificaciones',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          IconButton(
-            onPressed: () {
-              // TODO: podríamos navegar a Privacidad/Notificaciones del sistema
-            },
-            icon: const Icon(Icons.settings, color: Colors.white, size: 24),
-            padding: EdgeInsets.zero,
-            constraints:
-            const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Filtros
-  // ---------------------------------------------------------------------------
-  Widget _buildFilterTabs() {
-    return Container(
-      width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x0D000000),
-            blurRadius: 2,
-            offset: Offset(0, 1),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: List.generate(
-            tabs.length,
-                (index) => Padding(
-              padding:
-              EdgeInsets.only(right: index < tabs.length - 1 ? 12 : 0),
-              child: _buildFilterTab(
-                label: tabs[index],
-                isSelected: selectedTabIndex == index,
-                onTap: () => setState(() => selectedTabIndex = index),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterTab({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 40,
-        padding:
-        const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        decoration: BoxDecoration(
-          color:
-          isSelected ? const Color(0xFFA5D6A7) : const Color(0xFFE0E0E0),
-          borderRadius: BorderRadius.circular(9999),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: isSelected
-                  ? const Color(0xFF2E7D32)
-                  : const Color(0xFF616161),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // "Marcar todo como leído"
-  // ---------------------------------------------------------------------------
-  Widget _buildMarkAsReadButton() {
-    return Container(
-      width: double.infinity,
-      padding:
-      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      child: GestureDetector(
-        onTap: () {
-          // TODO: lógica para marcar como leído
-        },
-        child: const Text(
-          'Marcar todo como leído',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: Color(0xFF8D6E63),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Card de notificación
-  // ---------------------------------------------------------------------------
-  Widget _buildNotificationCard(NotificationItem notification) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0D000000),
-            blurRadius: 2,
-            offset: Offset(0, 1),
-          ),
-        ],
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Barra de color
-            Container(
-              width: 6,
-              decoration: BoxDecoration(
-                color: notification.color,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  bottomLeft: Radius.circular(16),
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: onBack,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  border: Border.all(color: BovaraColors.border, width: 1.5),
+                  borderRadius: BorderRadius.circular(12),
                 ),
+                child: const Icon(Icons.arrow_back_ios_new,
+                    size: 14, color: BovaraColors.textPrimary),
               ),
             ),
-
-            // Contenido
-            Expanded(
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Notificaciones',
+                    style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.2,
+                    )),
+                const SizedBox(height: 1),
+                Text(
+                  unread == 0 ? 'Al día' : '$unread sin leer',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          if (onMarkAllRead != null)
+            InkWell(
+              onTap: onMarkAllRead,
+              borderRadius: BorderRadius.circular(8),
               child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Icono
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: notification.bgColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        notification.icon,
-                        color: notification.color,
-                        size: 24,
-                      ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                child: Text('Marcar leídas',
+                    style: BovaraText.label(size: 12.5, color: BovaraColors.primary)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// CARD
+// ═════════════════════════════════════════════════════════════════
+
+class _NotifCard extends StatelessWidget {
+  final NotificationLogModel item;
+  final VoidCallback onTap;
+
+  const _NotifCard({required this.item, required this.onTap});
+
+  (IconData, Color, Color) get _visual {
+    switch (item.notifType) {
+      case 'vaccine':
+        return (Icons.medical_services_outlined, BovaraColors.info, BovaraColors.infoSoftBg);
+      case 'breeding':
+        return (Icons.favorite_rounded, BovaraColors.celo, BovaraColors.celoSoftBg);
+      case 'checkup':
+        return (Icons.health_and_safety_outlined, BovaraColors.primary, BovaraColors.primarySoftBg);
+      case 'feeding':
+        return (Icons.grass_outlined, BovaraColors.warning, BovaraColors.warningSoftBg);
+      default:
+        return (Icons.notifications_none_rounded, BovaraColors.textSecondary, BovaraColors.surfaceAlt);
+    }
+  }
+
+  String _timeAgo(DateTime d) {
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'Ahora';
+    if (diff.inMinutes < 60) return 'Hace ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'Hace ${diff.inHours} h';
+    if (diff.inDays == 1) return 'Ayer';
+    return 'Hace ${diff.inDays} días';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, fg, bg) = _visual;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x18000000),
+                blurRadius: 16,
+                offset: Offset(0, 6),
+                spreadRadius: -10,
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              if (!item.isRead)
+                Positioned(
+                  top: 2,
+                  right: 0,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: BovaraColors.info,
+                      shape: BoxShape.circle,
                     ),
-                    const SizedBox(width: 16),
-
-                    // Texto
-                    Expanded(
+                  ),
+                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(13)),
+                    child: Icon(icon, size: 20, color: fg),
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: item.isRead ? 0 : 14),
                       child: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Badge + indicador de no leído
-                          Row(
-                            children: [
-                              Container(
-                                padding:
-                                const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: notification.type ==
-                                      NotificationType.reminder
-                                      ? const Color(0xFFF1F8E9)
-                                      : notification.type ==
-                                      NotificationType.dataAlert
-                                      ? const Color(0xFFFFEBEE)
-                                      : notification.type ==
-                                      NotificationType.alert
-                                      ? const Color(0xFFFFF3E0)
-                                      : const Color(0xFFE3F2FD),
-                                  borderRadius:
-                                  BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  notification.type ==
-                                      NotificationType.reminder
-                                      ? 'Recordatorio'
-                                      : notification.type ==
-                                      NotificationType.dataAlert
-                                      ? 'Alerta de datos'
-                                      : notification.type ==
-                                      NotificationType.alert
-                                      ? 'Alerta'
-                                      : 'Sistema',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                    color: notification.type ==
-                                        NotificationType.reminder
-                                        ? const Color(0xFF2E7D32)
-                                        : notification.type ==
-                                        NotificationType
-                                            .dataAlert
-                                        ? const Color(0xFFD32F2F)
-                                        : notification.type ==
-                                        NotificationType.alert
-                                        ? const Color(
-                                        0xFFF57C00)
-                                        : const Color(
-                                        0xFF1976D2),
-                                  ),
-                                ),
-                              ),
-                              if (notification.isUnread) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF2E7D32),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-
+                          Text(item.title,
+                              style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
+                                  .copyWith(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 2),
+                          Text(item.body,
+                              style: BovaraText.body(size: 12.5, color: BovaraColors.textSecondary)
+                                  .copyWith(fontWeight: FontWeight.w500, height: 1.4)),
                           const SizedBox(height: 8),
-
-                          // Título
-                          Text(
-                            notification.title,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF222222),
-                              height: 1.25,
-                            ),
-                          ),
-
-                          const SizedBox(height: 6),
-
-                          // Descripción
-                          Text(
-                            notification.description,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w400,
-                              color: Color(0xFF616161),
-                              height: 1.6,
-                            ),
-                          ),
-
-                          const SizedBox(height: 18),
-
-                          // Timestamp
-                          Text(
-                            notification.timestamp,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w400,
-                              color: Color(0xFF616161),
-                            ),
-                          ),
+                          Text(_timeAgo(item.createdAt),
+                              style: BovaraText.label(size: 10.5, color: BovaraColors.textDisabled)),
                         ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Modelos de datos
-// ---------------------------------------------------------------------------
-
-enum NotificationType {
-  reminder,
-  dataAlert,
-  alert,
-  system,
-}
-
-class NotificationItem {
-  final NotificationType type;
-  final String title;
-  final String description;
-  final String timestamp;
-  final bool isUnread;
-  final IconData icon;
-  final Color color;
-  final Color bgColor;
-
-  NotificationItem({
-    required this.type,
-    required this.title,
-    required this.description,
-    required this.timestamp,
-    required this.isUnread,
-    required this.icon,
-    required this.color,
-    required this.bgColor,
-  });
 }

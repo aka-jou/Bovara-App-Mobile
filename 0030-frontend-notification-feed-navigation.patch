@@ -1,0 +1,789 @@
+diff --git a/lib/core/services/notification_service.dart b/lib/core/services/notification_service.dart
+index f90354e..a23c2d6 100644
+--- a/lib/core/services/notification_service.dart
++++ b/lib/core/services/notification_service.dart
+@@ -18,6 +18,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+ import 'package:http/http.dart' as http;
+ 
+ import '../config/api_config.dart';
++import '../router/app_router.dart';
+ import 'auth_service.dart';
+ 
+ /// Debe ser una función top-level (no método de clase) — la exige el SDK
+@@ -61,6 +62,9 @@ class NotificationService {
+       const InitializationSettings(
+         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+       ),
++      onDidReceiveNotificationResponse: (response) {
++        _navigateFromPayload(response.payload);
++      },
+     );
+ 
+     FirebaseMessaging.onMessage.listen((message) {
+@@ -79,8 +83,37 @@ class NotificationService {
+             priority: Priority.high,
+           ),
+         ),
++        payload: jsonEncode(message.data),
+       );
+     });
++
++    // Tap con la app en background (no terminada)
++    FirebaseMessaging.onMessageOpenedApp.listen((message) {
++      _navigateFromData(message.data);
++    });
++
++    // App abierta DESDE terminada tocando la notificación
++    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
++    if (initialMessage != null) {
++      _navigateFromData(initialMessage.data);
++    }
++  }
++
++  void _navigateFromPayload(String? payload) {
++    if (payload == null || payload.isEmpty) return;
++    try {
++      final data = jsonDecode(payload) as Map<String, dynamic>;
++      _navigateFromData(data.map((k, v) => MapEntry(k, v.toString())));
++    } catch (_) {}
++  }
++
++  /// El payload de FCM siempre trae reminder_id/type (ver fcm_service.py
++  /// del backend). Por ahora todo tipo de recordatorio navega a /reminders
++  /// — es la única pantalla que lista el detalle de tareas hoy.
++  void _navigateFromData(Map<String, dynamic> data) {
++    if (data.containsKey('reminder_id')) {
++      appRouter.go('/reminders');
++    }
+   }
+ 
+   /// Llamar tras login exitoso, y también al abrir la app si ya había
+diff --git a/lib/features/home/presentation/pages/dashboard_page.dart b/lib/features/home/presentation/pages/dashboard_page.dart
+index 3566d42..ccb8c50 100644
+--- a/lib/features/home/presentation/pages/dashboard_page.dart
++++ b/lib/features/home/presentation/pages/dashboard_page.dart
+@@ -25,6 +25,7 @@ import 'package:provider/provider.dart';
+ import '../../../../core/application/app_state_repository.dart';
+ import '../../../../core/theme/theme.dart';
+ import '../../../cattle/data/services/cattle_service.dart';
++import '../../../notifications/data/services/notification_log_service.dart';
+ 
+ class DashboardPage extends StatefulWidget {
+   const DashboardPage({super.key});
+@@ -35,7 +36,9 @@ class DashboardPage extends StatefulWidget {
+ 
+ class _DashboardPageState extends State<DashboardPage> {
+   final _cattleService = CattleService();
++  final _notifService = NotificationLogService();
+   int _cattleCount = 0;
++  int _unreadCount = 0;
+   bool _loadingCount = true;
+ 
+   // Panel contextual del navbar. null = cerrado. valores válidos:
+@@ -46,6 +49,16 @@ class _DashboardPageState extends State<DashboardPage> {
+   void initState() {
+     super.initState();
+     _loadCounts();
++    _loadUnread();
++  }
++
++  Future<void> _loadUnread() async {
++    try {
++      final list = await _notifService.list();
++      if (mounted) setState(() => _unreadCount = list.where((n) => !n.isRead).length);
++    } catch (_) {
++      // Silencioso: el badge simplemente no se actualiza si falla.
++    }
+   }
+ 
+   Future<void> _loadCounts() async {
+@@ -93,7 +106,7 @@ class _DashboardPageState extends State<DashboardPage> {
+               child: ListView(
+                 padding: const EdgeInsets.fromLTRB(22, 8, 22, 180),
+                 children: [
+-                  _Greeting(name: name, initials: initials, unread: 3),
++                  _Greeting(name: name, initials: initials, unread: _unreadCount),
+                   const SizedBox(height: 16),
+                   const _SyncBanner(),
+                   const SizedBox(height: 16),
+diff --git a/lib/features/notifications/data/models/notification_log_model.dart b/lib/features/notifications/data/models/notification_log_model.dart
+new file mode 100644
+index 0000000..791f38d
+--- /dev/null
++++ b/lib/features/notifications/data/models/notification_log_model.dart
+@@ -0,0 +1,44 @@
++// lib/features/notifications/data/models/notification_log_model.dart
++class NotificationLogModel {
++  final String id;
++  final String title;
++  final String body;
++  final String notifType;
++  final String? referenceType; // 'reminder' | 'cattle' | null
++  final String? referenceId;
++  final bool isRead;
++  final DateTime createdAt;
++
++  const NotificationLogModel({
++    required this.id,
++    required this.title,
++    required this.body,
++    required this.notifType,
++    this.referenceType,
++    this.referenceId,
++    required this.isRead,
++    required this.createdAt,
++  });
++
++  factory NotificationLogModel.fromJson(Map<String, dynamic> j) => NotificationLogModel(
++        id: j['id'],
++        title: j['title'],
++        body: j['body'],
++        notifType: j['notif_type'] ?? 'other',
++        referenceType: j['reference_type'],
++        referenceId: j['reference_id'],
++        isRead: j['is_read'] ?? false,
++        createdAt: DateTime.parse(j['created_at']),
++      );
++
++  NotificationLogModel copyWith({bool? isRead}) => NotificationLogModel(
++        id: id,
++        title: title,
++        body: body,
++        notifType: notifType,
++        referenceType: referenceType,
++        referenceId: referenceId,
++        isRead: isRead ?? this.isRead,
++        createdAt: createdAt,
++      );
++}
+diff --git a/lib/features/notifications/data/services/notification_log_service.dart b/lib/features/notifications/data/services/notification_log_service.dart
+new file mode 100644
+index 0000000..9ccfc36
+--- /dev/null
++++ b/lib/features/notifications/data/services/notification_log_service.dart
+@@ -0,0 +1,41 @@
++// lib/features/notifications/data/services/notification_log_service.dart
++import 'dart:convert';
++import 'package:http/http.dart' as http;
++
++import '../../../../core/config/api_config.dart';
++import '../../../../core/services/auth_service.dart';
++import '../models/notification_log_model.dart';
++
++class NotificationLogService {
++  final _auth = AuthService();
++
++  Future<Map<String, String>> _headers() async {
++    final token = await _auth.getToken();
++    return {
++      'Content-Type': 'application/json',
++      if (token != null) 'Authorization': 'Bearer $token',
++    };
++  }
++
++  Future<List<NotificationLogModel>> list({int limit = 50}) async {
++    final uri = Uri.parse(
++      '${ApiConfig.baseUrl}/api/v1/notifications?limit=$limit',
++    );
++    final resp = await http.get(uri, headers: await _headers());
++    if (resp.statusCode != 200) {
++      throw Exception('No pude cargar notificaciones (${resp.statusCode})');
++    }
++    final List list = jsonDecode(utf8.decode(resp.bodyBytes));
++    return list.map((j) => NotificationLogModel.fromJson(j)).toList();
++  }
++
++  Future<void> markRead(String id) async {
++    final uri = Uri.parse('${ApiConfig.baseUrl}/api/v1/notifications/$id/read');
++    await http.patch(uri, headers: await _headers());
++  }
++
++  Future<void> markAllRead() async {
++    final uri = Uri.parse('${ApiConfig.baseUrl}/api/v1/notifications/read-all');
++    await http.post(uri, headers: await _headers());
++  }
++}
+diff --git a/lib/features/notifications/presentation/pages/notifications_page.dart b/lib/features/notifications/presentation/pages/notifications_page.dart
+index b48bc4e..4eab9b9 100644
+--- a/lib/features/notifications/presentation/pages/notifications_page.dart
++++ b/lib/features/notifications/presentation/pages/notifications_page.dart
+@@ -1,26 +1,16 @@
+ // lib/features/notifications/presentation/pages/notifications_page.dart
+ //
+-// Notificaciones (Grupo G · Notificaciones del rediseño).
+-//
+-// NOTA: Este grupo también contenía "Calidad de datos" en el prototipo,
+-// pero el usuario pidió omitirlo, así que solo se implementa el listado.
+-//
+-// Estructura:
+-//   - Header: botón atrás + título "Notificaciones" + "N sin leer" +
+-//     acción "Marcar leídas".
+-//   - Sección "Hoy" con cards ricas: icono coloreado, título, cuerpo,
+-//     botones de acción secundarios (solo en algunas), timestamp, dot
+-//     azul si es no leída.
+-//   - Sección "Ayer" con cards atenuadas (opacity 0.75).
+-//
+-// LÓGICA: por ahora los items son mock hasta que el backend exponga un
+-// servicio de notificaciones/eventos unificado. La estructura del widget
+-// está lista para consumir una futura lista de `NotificationModel`.
++// Notificaciones — ahora con datos REALES del backend
++// (notifications-service). Una cuenta nueva ve la lista vacía hasta que
++// ocurre el primer evento (recordatorio próximo a vencer, etc). Tocar un
++// item marca como leído y navega a la sección correspondiente.
+ 
+ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
+ 
+ import '../../../../core/theme/theme.dart';
++import '../../data/models/notification_log_model.dart';
++import '../../data/services/notification_log_service.dart';
+ 
+ class NotificationsPage extends StatefulWidget {
+   const NotificationsPage({super.key});
+@@ -30,68 +20,65 @@ class NotificationsPage extends StatefulWidget {
+ }
+ 
+ class _NotificationsPageState extends State<NotificationsPage> {
+-  // Mock hasta que exista un endpoint de notificaciones.
+-  late List<_NotifItem> _todayItems;
+-  late List<_NotifItem> _yesterdayItems;
++  final _service = NotificationLogService();
++  List<NotificationLogModel> _items = [];
++  bool _loading = true;
++  String? _error;
+ 
+   @override
+   void initState() {
+     super.initState();
+-    _todayItems = [
+-      _NotifItem(
+-        icon: Icons.favorite_rounded,
+-        iconBg: BovaraColors.celoSoftBg,
+-        iconFg: BovaraColors.celo,
+-        title: 'Bovi detectó posible celo',
+-        body: 'Vaca #405 · confianza 94%. Ventana de inseminación: próximas 12 h.',
+-        timestamp: 'Hace 20 min',
+-        unread: true,
+-        actions: [
+-          _NotifAction(label: 'Ver animal', route: '/cattle', primary: true),
+-          _NotifAction(label: 'Recordar en 2 h', route: null, primary: false),
+-        ],
+-      ),
+-      _NotifItem(
+-        icon: Icons.medical_services_outlined,
+-        iconBg: BovaraColors.warningSoftBg,
+-        iconFg: BovaraColors.warning,
+-        title: 'Recordatorio: vacunar Lote C',
+-        body: 'Mañana 8:00 AM · 15 animales · antiaftosa.',
+-        timestamp: 'Hace 3 h',
+-        unread: true,
+-      ),
+-    ];
++    _load();
++  }
+ 
+-    _yesterdayItems = [
+-      _NotifItem(
+-        icon: Icons.check_rounded,
+-        iconBg: BovaraColors.primarySoftBg,
+-        iconFg: BovaraColors.primary,
+-        title: 'Sincronización completa',
+-        body: '12 registros subidos correctamente a la nube.',
+-        timestamp: 'Ayer · 9:14 PM',
+-        unread: false,
+-      ),
+-      _NotifItem(
+-        icon: Icons.bar_chart_rounded,
+-        iconBg: BovaraColors.infoSoftBg,
+-        iconFg: BovaraColors.info,
+-        title: 'Reporte semanal listo',
+-        body: 'Ganancia de peso promedio: +2.1 kg. 5 celos detectados.',
+-        timestamp: 'Ayer · 7:00 AM',
+-        unread: false,
+-      ),
+-    ];
++  Future<void> _load() async {
++    setState(() {
++      _loading = true;
++      _error = null;
++    });
++    try {
++      final list = await _service.list();
++      if (!mounted) return;
++      setState(() {
++        _items = list;
++        _loading = false;
++      });
++    } catch (e) {
++      if (!mounted) return;
++      setState(() {
++        _error = 'No pude cargar tus notificaciones.';
++        _loading = false;
++      });
++    }
+   }
+ 
+-  int get _unreadCount => _todayItems.where((n) => n.unread).length +
+-      _yesterdayItems.where((n) => n.unread).length;
++  int get _unreadCount => _items.where((n) => !n.isRead).length;
+ 
+-  void _markAllRead() {
++  Future<void> _markAllRead() async {
+     setState(() {
+-      _todayItems = _todayItems.map((n) => n.copyRead()).toList();
+-      _yesterdayItems = _yesterdayItems.map((n) => n.copyRead()).toList();
++      _items = _items.map((n) => n.copyWith(isRead: true)).toList();
+     });
++    await _service.markAllRead();
++  }
++
++  Future<void> _onTapItem(NotificationLogModel n) async {
++    if (!n.isRead) {
++      setState(() {
++        _items = _items.map((x) => x.id == n.id ? x.copyWith(isRead: true) : x).toList();
++      });
++      _service.markRead(n.id);
++    }
++    if (!mounted) return;
++    switch (n.referenceType) {
++      case 'reminder':
++        context.push('/reminders');
++        break;
++      case 'cattle':
++        if (n.referenceId != null) context.push('/cattle/${n.referenceId}');
++        break;
++      default:
++        break;
++    }
+   }
+ 
+   @override
+@@ -106,34 +93,78 @@ class _NotificationsPageState extends State<NotificationsPage> {
+               onBack: () => context.go('/home'),
+               onMarkAllRead: _unreadCount > 0 ? _markAllRead : null,
+             ),
+-            Expanded(
+-              child: ListView(
+-                padding: const EdgeInsets.fromLTRB(22, 6, 22, 30),
+-                children: [
+-                  const _SectionLabel(text: 'Hoy'),
+-                  const SizedBox(height: 10),
+-                  ..._todayItems.map((n) => Padding(
+-                        padding: const EdgeInsets.only(bottom: 10),
+-                        child: _NotifCard(item: n),
+-                      )),
+-                  const SizedBox(height: 18),
+-                  const _SectionLabel(text: 'Ayer'),
+-                  const SizedBox(height: 10),
+-                  ..._yesterdayItems.map((n) => Padding(
+-                        padding: const EdgeInsets.only(bottom: 10),
+-                        child: Opacity(
+-                          opacity: 0.75,
+-                          child: _NotifCard(item: n),
+-                        ),
+-                      )),
+-                ],
+-              ),
+-            ),
++            Expanded(child: _buildBody()),
+           ],
+         ),
+       ),
+     );
+   }
++
++  Widget _buildBody() {
++    if (_loading) {
++      return const Center(
++        child: CircularProgressIndicator(color: BovaraColors.primary),
++      );
++    }
++    if (_error != null) {
++      return Center(
++        child: Padding(
++          padding: const EdgeInsets.all(30),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              const Icon(Icons.cloud_off_outlined, size: 42, color: BovaraColors.textMuted),
++              const SizedBox(height: 12),
++              Text(_error!, textAlign: TextAlign.center,
++                  style: BovaraText.body(size: 14, color: BovaraColors.textSecondary)),
++              const SizedBox(height: 14),
++              TextButton(
++                onPressed: _load,
++                child: Text('Reintentar',
++                    style: BovaraText.label(size: 13, color: BovaraColors.primary)),
++              ),
++            ],
++          ),
++        ),
++      );
++    }
++    if (_items.isEmpty) {
++      return Center(
++        child: Padding(
++          padding: const EdgeInsets.all(30),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              const Icon(Icons.notifications_none_rounded,
++                  size: 46, color: BovaraColors.textDisabled),
++              const SizedBox(height: 14),
++              Text('Sin notificaciones todavía',
++                  style: BovaraText.heading(color: BovaraColors.textSecondary)),
++              const SizedBox(height: 6),
++              Text(
++                'Aquí verás avisos de celos, vacunas y tareas\ncuando ocurran.',
++                textAlign: TextAlign.center,
++                style: BovaraText.label(size: 13, color: BovaraColors.textMuted),
++              ),
++            ],
++          ),
++        ),
++      );
++    }
++    return RefreshIndicator(
++      color: BovaraColors.primary,
++      onRefresh: _load,
++      child: ListView.separated(
++        padding: const EdgeInsets.fromLTRB(22, 6, 22, 30),
++        itemCount: _items.length,
++        separatorBuilder: (_, __) => const SizedBox(height: 10),
++        itemBuilder: (context, i) => _NotifCard(
++          item: _items[i],
++          onTap: () => _onTapItem(_items[i]),
++        ),
++      ),
++    );
++  }
+ }
+ 
+ // ═════════════════════════════════════════════════════════════════
+@@ -145,11 +176,7 @@ class _Header extends StatelessWidget {
+   final VoidCallback onBack;
+   final VoidCallback? onMarkAllRead;
+ 
+-  const _Header({
+-    required this.unread,
+-    required this.onBack,
+-    required this.onMarkAllRead,
+-  });
++  const _Header({required this.unread, required this.onBack, required this.onMarkAllRead});
+ 
+   @override
+   Widget build(BuildContext context) {
+@@ -180,17 +207,15 @@ class _Header extends StatelessWidget {
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+-                Text(
+-                  'Notificaciones',
+-                  style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+-                    fontSize: 20,
+-                    fontWeight: FontWeight.w800,
+-                    letterSpacing: -0.2,
+-                  ),
+-                ),
++                Text('Notificaciones',
++                    style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++                      fontSize: 20,
++                      fontWeight: FontWeight.w800,
++                      letterSpacing: -0.2,
++                    )),
+                 const SizedBox(height: 1),
+                 Text(
+-                  unread == 0 ? 'Al día' : '$unread sin ${unread == 1 ? 'leer' : 'leer'}',
++                  unread == 0 ? 'Al día' : '$unread sin leer',
+                   style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
+                 ),
+               ],
+@@ -202,10 +227,8 @@ class _Header extends StatelessWidget {
+               borderRadius: BorderRadius.circular(8),
+               child: Padding(
+                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+-                child: Text(
+-                  'Marcar leídas',
+-                  style: BovaraText.label(size: 12.5, color: BovaraColors.primary),
+-                ),
++                child: Text('Marcar leídas',
++                    style: BovaraText.label(size: 12.5, color: BovaraColors.primary)),
+               ),
+             ),
+         ],
+@@ -214,188 +237,111 @@ class _Header extends StatelessWidget {
+   }
+ }
+ 
+-class _SectionLabel extends StatelessWidget {
+-  final String text;
+-  const _SectionLabel({required this.text});
+-
+-  @override
+-  Widget build(BuildContext context) {
+-    return Text(
+-      text.toUpperCase(),
+-      style: BovaraText.label(size: 11, color: BovaraColors.textMuted)
+-          .copyWith(letterSpacing: 1.1, fontWeight: FontWeight.w800),
+-    );
+-  }
+-}
+-
+ // ═════════════════════════════════════════════════════════════════
+-// NOTIF CARD
++// CARD
+ // ═════════════════════════════════════════════════════════════════
+ 
+-class _NotifItem {
+-  final IconData icon;
+-  final Color iconBg;
+-  final Color iconFg;
+-  final String title;
+-  final String body;
+-  final String timestamp;
+-  final bool unread;
+-  final List<_NotifAction>? actions;
+-
+-  const _NotifItem({
+-    required this.icon,
+-    required this.iconBg,
+-    required this.iconFg,
+-    required this.title,
+-    required this.body,
+-    required this.timestamp,
+-    required this.unread,
+-    this.actions,
+-  });
++class _NotifCard extends StatelessWidget {
++  final NotificationLogModel item;
++  final VoidCallback onTap;
+ 
+-  _NotifItem copyRead() => _NotifItem(
+-        icon: icon,
+-        iconBg: iconBg,
+-        iconFg: iconFg,
+-        title: title,
+-        body: body,
+-        timestamp: timestamp,
+-        unread: false,
+-        actions: actions,
+-      );
+-}
++  const _NotifCard({required this.item, required this.onTap});
+ 
+-class _NotifAction {
+-  final String label;
+-  final String? route;
+-  final bool primary;
+-  const _NotifAction({required this.label, this.route, required this.primary});
+-}
++  (IconData, Color, Color) get _visual {
++    switch (item.notifType) {
++      case 'vaccine':
++        return (Icons.medical_services_outlined, BovaraColors.info, BovaraColors.infoSoftBg);
++      case 'breeding':
++        return (Icons.favorite_rounded, BovaraColors.celo, BovaraColors.celoSoftBg);
++      case 'checkup':
++        return (Icons.health_and_safety_outlined, BovaraColors.primary, BovaraColors.primarySoftBg);
++      case 'feeding':
++        return (Icons.grass_outlined, BovaraColors.warning, BovaraColors.warningSoftBg);
++      default:
++        return (Icons.notifications_none_rounded, BovaraColors.textSecondary, BovaraColors.surfaceAlt);
++    }
++  }
+ 
+-class _NotifCard extends StatelessWidget {
+-  final _NotifItem item;
+-  const _NotifCard({required this.item});
++  String _timeAgo(DateTime d) {
++    final diff = DateTime.now().difference(d);
++    if (diff.inMinutes < 1) return 'Ahora';
++    if (diff.inMinutes < 60) return 'Hace ${diff.inMinutes} min';
++    if (diff.inHours < 24) return 'Hace ${diff.inHours} h';
++    if (diff.inDays == 1) return 'Ayer';
++    return 'Hace ${diff.inDays} días';
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return Container(
+-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+-      decoration: BoxDecoration(
+-        color: Colors.white,
++    final (icon, fg, bg) = _visual;
++    return Material(
++      color: Colors.white,
++      borderRadius: BorderRadius.circular(18),
++      child: InkWell(
++        onTap: onTap,
+         borderRadius: BorderRadius.circular(18),
+-        boxShadow: const [
+-          BoxShadow(
+-            color: Color(0x18000000),
+-            blurRadius: 16,
+-            offset: Offset(0, 6),
+-            spreadRadius: -10,
++        child: Container(
++          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
++          decoration: BoxDecoration(
++            borderRadius: BorderRadius.circular(18),
++            boxShadow: const [
++              BoxShadow(
++                color: Color(0x18000000),
++                blurRadius: 16,
++                offset: Offset(0, 6),
++                spreadRadius: -10,
++              ),
++            ],
+           ),
+-        ],
+-      ),
+-      child: Stack(
+-        children: [
+-          if (item.unread)
+-            const Positioned(
+-              top: 2,
+-              right: 0,
+-              child: _UnreadDot(),
+-            ),
+-          Row(
+-            crossAxisAlignment: CrossAxisAlignment.start,
++          child: Stack(
+             children: [
+-              Container(
+-                width: 40,
+-                height: 40,
+-                decoration: BoxDecoration(
+-                  color: item.iconBg,
+-                  borderRadius: BorderRadius.circular(13),
++              if (!item.isRead)
++                Positioned(
++                  top: 2,
++                  right: 0,
++                  child: Container(
++                    width: 8,
++                    height: 8,
++                    decoration: const BoxDecoration(
++                      color: BovaraColors.info,
++                      shape: BoxShape.circle,
++                    ),
++                  ),
+                 ),
+-                child: Icon(item.icon, size: 20, color: item.iconFg),
+-              ),
+-              const SizedBox(width: 13),
+-              Expanded(
+-                child: Padding(
+-                  padding: EdgeInsets.only(right: item.unread ? 14 : 0),
+-                  child: Column(
+-                    crossAxisAlignment: CrossAxisAlignment.start,
+-                    children: [
+-                      Text(
+-                        item.title,
+-                        style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
+-                            .copyWith(fontWeight: FontWeight.w800),
+-                      ),
+-                      const SizedBox(height: 2),
+-                      Text(
+-                        item.body,
+-                        style: BovaraText.body(size: 12.5, color: BovaraColors.textSecondary)
+-                            .copyWith(fontWeight: FontWeight.w500, height: 1.4),
+-                      ),
+-                      if (item.actions != null && item.actions!.isNotEmpty) ...[
+-                        const SizedBox(height: 9),
+-                        Wrap(
+-                          spacing: 7,
+-                          runSpacing: 6,
+-                          children: item.actions!
+-                              .map((a) => _ActionChip(action: a))
+-                              .toList(),
+-                        ),
+-                      ],
+-                      const SizedBox(height: 8),
+-                      Text(
+-                        item.timestamp,
+-                        style: BovaraText.label(size: 10.5, color: BovaraColors.textDisabled),
++              Row(
++                crossAxisAlignment: CrossAxisAlignment.start,
++                children: [
++                  Container(
++                    width: 40,
++                    height: 40,
++                    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(13)),
++                    child: Icon(icon, size: 20, color: fg),
++                  ),
++                  const SizedBox(width: 13),
++                  Expanded(
++                    child: Padding(
++                      padding: EdgeInsets.only(right: item.isRead ? 0 : 14),
++                      child: Column(
++                        crossAxisAlignment: CrossAxisAlignment.start,
++                        children: [
++                          Text(item.title,
++                              style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
++                                  .copyWith(fontWeight: FontWeight.w800)),
++                          const SizedBox(height: 2),
++                          Text(item.body,
++                              style: BovaraText.body(size: 12.5, color: BovaraColors.textSecondary)
++                                  .copyWith(fontWeight: FontWeight.w500, height: 1.4)),
++                          const SizedBox(height: 8),
++                          Text(_timeAgo(item.createdAt),
++                              style: BovaraText.label(size: 10.5, color: BovaraColors.textDisabled)),
++                        ],
+                       ),
+-                    ],
++                    ),
+                   ),
+-                ),
++                ],
+               ),
+             ],
+           ),
+-        ],
+-      ),
+-    );
+-  }
+-}
+-
+-class _UnreadDot extends StatelessWidget {
+-  const _UnreadDot();
+-
+-  @override
+-  Widget build(BuildContext context) {
+-    return Container(
+-      width: 8,
+-      height: 8,
+-      decoration: const BoxDecoration(
+-        color: BovaraColors.info,
+-        shape: BoxShape.circle,
+-      ),
+-    );
+-  }
+-}
+-
+-class _ActionChip extends StatelessWidget {
+-  final _NotifAction action;
+-  const _ActionChip({required this.action});
+-
+-  @override
+-  Widget build(BuildContext context) {
+-    final bg = action.primary ? BovaraColors.celo : BovaraColors.surfaceAlt;
+-    final fg = action.primary ? Colors.white : BovaraColors.textSecondary;
+-
+-    return InkWell(
+-      onTap: () {
+-        if (action.route != null) context.push(action.route!);
+-      },
+-      borderRadius: BorderRadius.circular(12),
+-      child: Container(
+-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+-        decoration: BoxDecoration(
+-          color: bg,
+-          borderRadius: BorderRadius.circular(12),
+-        ),
+-        child: Text(
+-          action.label,
+-          style: BovaraText.label(size: 11.5, color: fg).copyWith(fontWeight: FontWeight.w800),
+         ),
+       ),
+     );

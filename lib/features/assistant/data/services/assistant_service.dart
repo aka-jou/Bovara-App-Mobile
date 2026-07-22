@@ -1,38 +1,38 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../../../core/config/api_config.dart'; // ✅ AGREGADO
+import '../../../../core/services/auth_service.dart';
 
 class AssistantService {
   final String baseUrl = ApiConfig.baseUrl; // ✅ USA EL GATEWAY
+  final _auth = AuthService();
 
   Future<AssistantResponse> sendMessage(String message) async {
     try {
       final url = '${baseUrl}${ApiConfig.chatEndpoint}';
-      print('🤖 Enviando mensaje a: $url');
-      print('💬 Mensaje: $message');
+      final token = await _auth.getToken();
 
       final response = await http.post(
         Uri.parse(url),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
         },
         body: json.encode({
           'message': message,
         }),
       );
 
-      print('📡 Status: ${response.statusCode}');
-      print('📦 Body: ${response.body}');
-
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return AssistantResponse.fromJson(data);
+      } else if (response.statusCode == 401) {
+        throw Exception('Tu sesión expiró, vuelve a iniciar sesión.');
       } else {
         throw Exception('Error del servidor: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ Error: $e');
       throw Exception('Error de conexión: $e');
     }
   }

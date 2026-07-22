@@ -1,0 +1,254 @@
+diff --git a/lib/core/services/notification_service.dart b/lib/core/services/notification_service.dart
+new file mode 100644
+index 0000000..f90354e
+--- /dev/null
++++ b/lib/core/services/notification_service.dart
+@@ -0,0 +1,128 @@
++// lib/core/services/notification_service.dart
++//
++// Wiring de Firebase Cloud Messaging:
++//   - initialize(): pide permiso (Android 13+), configura canal local
++//     para mostrar push cuando la app está en foreground.
++//   - registerToken(): obtiene el token FCM y lo manda al backend
++//     (POST /api/v1/notifications/register-device). Llamar tras login
++//     exitoso y también al arrancar si ya había sesión.
++//   - unregisterToken(): llamar en logout.
++//
++// El canal "bovara_reminders" debe coincidir con el channel_id que usa
++// el notifications-service al construir el AndroidNotification (ver
++// fcm_service.py del backend).
++
++import 'dart:convert';
++import 'package:firebase_messaging/firebase_messaging.dart';
++import 'package:flutter_local_notifications/flutter_local_notifications.dart';
++import 'package:http/http.dart' as http;
++
++import '../config/api_config.dart';
++import 'auth_service.dart';
++
++/// Debe ser una función top-level (no método de clase) — la exige el SDK
++/// para el handler de mensajes en background/terminated.
++@pragma('vm:entry-point')
++Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
++  // No hace falta lógica aquí: Android ya muestra la notificación del
++  // payload "notification" automáticamente cuando la app está en
++  // background/terminated. Este handler solo debe existir para que el
++  // SDK no lo reclame en consola.
++}
++
++class NotificationService {
++  static final _local = FlutterLocalNotificationsPlugin();
++  final _auth = AuthService();
++
++  Future<void> initialize() async {
++    final messaging = FirebaseMessaging.instance;
++
++    await messaging.requestPermission(
++      alert: true,
++      badge: true,
++      sound: true,
++    );
++
++    // Canal Android para cuando la app está ABIERTA (foreground). FCM no
++    // muestra notificación automática en foreground; hay que dispararla
++    // manualmente con flutter_local_notifications.
++    const channel = AndroidNotificationChannel(
++      'bovara_reminders',
++      'Recordatorios Bovara',
++      description: 'Vacunas, celos y tareas del rancho',
++      importance: Importance.high,
++    );
++    await _local
++        .resolvePlatformSpecificImplementation<
++            AndroidFlutterLocalNotificationsPlugin>()
++        ?.createNotificationChannel(channel);
++
++    await _local.initialize(
++      const InitializationSettings(
++        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
++      ),
++    );
++
++    FirebaseMessaging.onMessage.listen((message) {
++      final notif = message.notification;
++      if (notif == null) return;
++      _local.show(
++        notif.hashCode,
++        notif.title,
++        notif.body,
++        const NotificationDetails(
++          android: AndroidNotificationDetails(
++            'bovara_reminders',
++            'Recordatorios Bovara',
++            channelDescription: 'Vacunas, celos y tareas del rancho',
++            importance: Importance.high,
++            priority: Priority.high,
++          ),
++        ),
++      );
++    });
++  }
++
++  /// Llamar tras login exitoso, y también al abrir la app si ya había
++  /// sesión (AuthGate), para mantener el token fresco.
++  Future<void> registerToken() async {
++    try {
++      final fcmToken = await FirebaseMessaging.instance.getToken();
++      if (fcmToken == null) return;
++
++      final authToken = await _auth.getToken();
++      if (authToken == null) return; // sin sesión, no registrar
++
++      await http.post(
++        Uri.parse('${ApiConfig.baseUrl}/api/v1/notifications/register-device'),
++        headers: {
++          'Content-Type': 'application/json',
++          'Authorization': 'Bearer $authToken',
++        },
++        body: jsonEncode({'fcm_token': fcmToken, 'platform': 'android'}),
++      );
++    } catch (_) {
++      // Silencioso a propósito: no bloquear login/arranque si falla.
++    }
++  }
++
++  /// Llamar antes de limpiar la sesión en logout.
++  Future<void> unregisterToken() async {
++    try {
++      final fcmToken = await FirebaseMessaging.instance.getToken();
++      if (fcmToken == null) return;
++      final authToken = await _auth.getToken();
++      if (authToken == null) return;
++
++      await http.delete(
++        Uri.parse(
++          '${ApiConfig.baseUrl}/api/v1/notifications/unregister-device'
++          '?fcm_token=${Uri.encodeComponent(fcmToken)}',
++        ),
++        headers: {'Authorization': 'Bearer $authToken'},
++      );
++    } catch (_) {
++      // Silencioso: el logout no debe fallar por esto.
++    }
++  }
++}
+diff --git a/lib/features/auth/presentation/pages/auth_gate.dart b/lib/features/auth/presentation/pages/auth_gate.dart
+index 81884cb..07d1d89 100644
+--- a/lib/features/auth/presentation/pages/auth_gate.dart
++++ b/lib/features/auth/presentation/pages/auth_gate.dart
+@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
+ import 'package:shared_preferences/shared_preferences.dart';
+ 
+ import '../../../../core/application/app_state_repository.dart';
++import '../../../../core/services/notification_service.dart';
+ import '../../../../core/theme/theme.dart';
+ 
+ class AuthGate extends StatefulWidget {
+@@ -47,6 +48,7 @@ class _AuthGateState extends State<AuthGate> {
+     if (!mounted) return;
+ 
+     if (appState.isLoggedIn) {
++      NotificationService().registerToken();
+       context.go('/home');
+     } else if (!onboardingSeen) {
+       context.go('/onboarding');
+diff --git a/lib/features/auth/presentation/pages/login_page.dart b/lib/features/auth/presentation/pages/login_page.dart
+index d360a5c..3f986ec 100644
+--- a/lib/features/auth/presentation/pages/login_page.dart
++++ b/lib/features/auth/presentation/pages/login_page.dart
+@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
+ 
+ import '../../../../core/application/app_state_repository.dart';
+ import '../../../../core/services/connectivity_service.dart';
++import '../../../../core/services/notification_service.dart';
+ import '../../../../core/theme/theme.dart';
+ import '../../../../core/widgets/bovara_buttons.dart';
+ import '../../../../core/widgets/bovara_text_field.dart';
+@@ -89,6 +90,7 @@ class _LoginPageState extends State<LoginPage> {
+         role: response.user.role,
+       );
+       appState.setLoggedIn(true, email: response.user.email);
++      NotificationService().registerToken();
+ 
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+diff --git a/lib/features/auth/presentation/pages/signup_page.dart b/lib/features/auth/presentation/pages/signup_page.dart
+index 0bd8a7b..74c59b2 100644
+--- a/lib/features/auth/presentation/pages/signup_page.dart
++++ b/lib/features/auth/presentation/pages/signup_page.dart
+@@ -8,6 +8,7 @@
+ // La LÓGICA de _authService.register() y AppStateRepository se preserva.
+ 
+ import 'package:flutter/material.dart';
++import '../../../../core/services/notification_service.dart';
+ import 'package:go_router/go_router.dart';
+ import 'package:provider/provider.dart';
+ 
+@@ -92,6 +93,7 @@ class _SignUpPageState extends State<SignUpPage> {
+         email: email,
+       );
+       appState.setLoggedIn(true, email: email);
++      NotificationService().registerToken();
+ 
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+diff --git a/lib/features/profile/presentation/pages/account_page.dart b/lib/features/profile/presentation/pages/account_page.dart
+index 7ac00fd..5517049 100644
+--- a/lib/features/profile/presentation/pages/account_page.dart
++++ b/lib/features/profile/presentation/pages/account_page.dart
+@@ -23,6 +23,7 @@ import 'package:go_router/go_router.dart';
+ import 'package:provider/provider.dart';
+ 
+ import '../../../../core/application/app_state_repository.dart';
++import '../../../../core/services/notification_service.dart';
+ import '../../../../core/theme/theme.dart';
+ import '../../../cattle/data/services/cattle_service.dart';
+ 
+@@ -84,6 +85,7 @@ class _AccountPageState extends State<AccountPage> {
+       ),
+     );
+     if (confirmed == true) {
++      await NotificationService().unregisterToken();
+       await appState.logout();
+       if (mounted) context.go('/welcome');
+     }
+diff --git a/lib/main.dart b/lib/main.dart
+index 4bb1a6b..cce7405 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,11 +1,19 @@
+ import 'package:flutter/material.dart';
++import 'package:firebase_core/firebase_core.dart';
++import 'package:firebase_messaging/firebase_messaging.dart';
+ import 'package:provider/provider.dart';
+ import 'app.dart';
+ import 'core/application/app_state_repository.dart';
++import 'core/services/notification_service.dart';
+ import 'features/auth/data/services/auth_service.dart';        // ← NUEVO
+ import 'features/auth/presentation/providers/auth_provider.dart'; // ← NUEVO
+ 
+-void main() {
++void main() async {
++  WidgetsFlutterBinding.ensureInitialized();
++  await Firebase.initializeApp();
++  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
++  await NotificationService().initialize();
++
+   runApp(
+     MultiProvider(
+       providers: [
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 6753c9f..017feed 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -35,6 +35,10 @@ dependencies:
+   http: ^1.2.0
+   # Selector nativo de foto (galería + cámara). Se sube a Cloudinary.
+   image_picker: ^1.0.7
++  # Push notifications (FCM)
++  firebase_core: ^3.6.0
++  firebase_messaging: ^15.1.3
++  flutter_local_notifications: ^18.0.1
+ 
+ dev_dependencies:
+   flutter_test:

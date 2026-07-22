@@ -1,10 +1,24 @@
+// lib/features/cattle/presentation/pages/cattle_list_page.dart
+//
+// Lista de ganado (Grupo E · Lista del rediseño).
+//
+// Estructura:
+//   - Header con título "Mi hato" + subtítulo con conteos reales.
+//   - Search bar y chips de filtro por lote (Todos | Lote A | Lote B | …).
+//   - Lista de cards con avatar circular, arete + nombre, meta (lote · peso · edad)
+//     y badge de estado (En celo / Al día / Pendiente).
+//   - FAB "Nueva vaca" flotante con gradient verde.
+//
+// LÓGICA: usa CattleService.getCattleList() para datos reales; los badges
+// se calculan localmente hasta que haya una fuente de verdad de estado
+// reproductivo/salud por animal.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
+
+import '../../../../core/theme/theme.dart';
 import '../../data/models/cattle_model.dart';
 import '../../data/services/cattle_service.dart';
-import '../../../../core/services/auth_service.dart';
-import '../../../../core/application/app_state_repository.dart';
 
 class CattleListPage extends StatefulWidget {
   const CattleListPage({super.key});
@@ -14,574 +28,454 @@ class CattleListPage extends StatefulWidget {
 }
 
 class _CattleListPageState extends State<CattleListPage> {
-  final CattleService _cattleService = CattleService();
-  int selectedTabIndex = 0;
-  final TextEditingController searchController = TextEditingController();
+  final _service = CattleService();
+  final _searchCtrl = TextEditingController();
 
-  List<CattleModel> cattleList = [];
-  bool isLoading = true;
-  String? errorMessage;
+  List<CattleModel> _all = [];
+  bool _loading = true;
+  String? _error;
+  String _selectedFilter = 'Todos';
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
-    _loadCattle();
-  }
-
-  // ✅ MÉTODO MEJORADO PARA CARGAR VACAS
-  Future<void> _loadCattle() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
+    _load();
+    _searchCtrl.addListener(() {
+      setState(() => _query = _searchCtrl.text.trim().toLowerCase());
     });
+  }
 
-    // Debug: Verificar token
-    final authService = AuthService();
-    final token = await authService.getToken();
-    print('🎫 Token al cargar vacas: ${token != null ? token.substring(0, 20) : "NULL"}...');
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      final cattle = await _cattleService.getCattleList();
-
-      if (mounted) {
-        setState(() {
-          cattleList = cattle;
-          isLoading = false;
-        });
-        print('✅ ${cattle.length} vacas cargadas exitosamente');
-      }
+      final list = await _service.getCattleList();
+      if (!mounted) return;
+      setState(() {
+        _all = list;
+        _loading = false;
+      });
     } catch (e) {
-      print('❌ Error cargando vacas: $e');
-      if (mounted) {
-        setState(() {
-          errorMessage = e.toString();
-          isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = 'No pude cargar el hato. Revisa tu conexión.';
+        _loading = false;
+      });
     }
   }
 
-  List<String> get tabs {
-    final lots = cattleList.map((c) => c.lote).toSet().toList();
-    lots.sort();
-    return ['Todos', ...lots];
+  List<String> get _availableFilters {
+    final lotes = _all.map((c) => c.lote).toSet().toList()..sort();
+    return ['Todos', ...lotes];
   }
 
-  List<CattleModel> get filteredCattle {
-    if (selectedTabIndex == 0) return cattleList;
-    final selectedLot = tabs[selectedTabIndex];
-    return cattleList.where((cattle) => cattle.lote == selectedLot).toList();
-  }
-
-  // ✅ MÉTODO MEJORADO PARA CREAR VACA
-  Future<void> _createCattle(CattleModel newCattle) async {
-    try {
-      // Mostrar loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
-        ),
-      );
-
-      // Crear la vaca
-      await _cattleService.createCattle(newCattle);
-
-      if (mounted) Navigator.pop(context); // Cerrar loading
-
-      // ✅ RECARGAR LA LISTA
-      await _loadCattle();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ ${newCattle.name} agregada exitosamente'),
-            backgroundColor: const Color(0xFF388E3C),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) Navigator.pop(context); // Cerrar loading
-
-      print('❌ Error creando vaca: $e');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: const Color(0xFFEF4444),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+  List<CattleModel> get _filtered {
+    Iterable<CattleModel> res = _all;
+    if (_selectedFilter != 'Todos') {
+      res = res.where((c) => c.lote == _selectedFilter);
     }
-  }
-
-  // ✅ MOSTRAR FORMULARIO Y RECARGAR AL CERRAR
-  void _showAddCattleForm() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => AddCattleForm(
-        onSave: (newCattle) async {
-          Navigator.pop(context); // Cerrar el modal primero
-          await _createCattle(newCattle); // Luego crear y recargar
-        },
-      ),
-    );
+    if (_query.isNotEmpty) {
+      res = res.where((c) {
+        return c.name.toLowerCase().contains(_query) ||
+            c.lote.toLowerCase().contains(_query) ||
+            c.id.toLowerCase().contains(_query);
+      });
+    }
+    return res.toList();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF2E7D32),
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => context.go('/home'),
-        ),
-        title: const Text(
-          'Vacas del rancho',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _loadCattle,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 16),
-          _buildRanchInfoCard(),
-          const SizedBox(height: 16),
-          _buildSearchAndFilters(),
-          const SizedBox(height: 16),
-          Expanded(child: _buildCattleList()),
-          _buildAddButton(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRanchInfoCard() {
-    final appState = context.watch<AppStateRepository>();
-    final ranchName = appState.ranchName ?? 'Mi Rancho';
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0D000000),
-              blurRadius: 2,
-              offset: Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      backgroundColor: BovaraColors.surfaceAlt,
+      body: SafeArea(
+        bottom: false,
+        child: Stack(
           children: [
-            Text(
-              ranchName,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF222222),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${cattleList.length} vacas registradas',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF616161),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchAndFilters() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        children: [
-          Container(
-            height: 58,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFF3F4F6)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x0D000000),
-                  blurRadius: 2,
-                  offset: Offset(0, 1),
+            Column(
+              children: [
+                _Header(
+                  total: _all.length,
+                  loteCount: _availableFilters.length - 1,
+                  onBack: () => context.go('/home'),
+                ),
+                _SearchBar(controller: _searchCtrl),
+                _FilterChips(
+                  filters: _availableFilters,
+                  selected: _selectedFilter,
+                  onSelect: (f) => setState(() => _selectedFilter = f),
+                ),
+                Expanded(
+                  child: _buildBody(),
                 ),
               ],
             ),
-            child: TextField(
-              controller: searchController,
-              decoration: const InputDecoration(
-                hintText: 'Buscar por nombre o arete',
-                hintStyle: TextStyle(
-                  fontSize: 16,
-                  color: Color(0xFFADAEBC),
-                  fontWeight: FontWeight.w400,
+            Positioned(
+              right: 20,
+              bottom: 26 + MediaQuery.of(context).padding.bottom,
+              child: _NewCattleFab(onTap: () async {
+                await context.push('/cattle/new');
+                if (mounted) _load();
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(color: BovaraColors.primary),
+      );
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off_outlined, size: 42, color: BovaraColors.textMuted),
+              const SizedBox(height: 12),
+              Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: BovaraText.body(size: 14, color: BovaraColors.textSecondary)),
+              const SizedBox(height: 14),
+              TextButton(
+                onPressed: _load,
+                child: Text('Reintentar',
+                    style: BovaraText.label(size: 13, color: BovaraColors.primary)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final items = _filtered;
+    if (items.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Text(
+            _all.isEmpty
+                ? 'Aún no hay animales registrados.\nToca "Nueva vaca" para empezar.'
+                : 'No se encontraron animales con estos filtros.',
+            textAlign: TextAlign.center,
+            style: BovaraText.body(size: 14, color: BovaraColors.textMuted),
+          ),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      color: BovaraColors.primary,
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(22, 14, 22, 120),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 11),
+        itemBuilder: (context, i) => _CattleCard(
+          cattle: items[i],
+          onTap: () => context.push('/cattle/${items[i].id}', extra: items[i]),
+        ),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// HEADER
+// ═════════════════════════════════════════════════════════════════
+
+class _Header extends StatelessWidget {
+  final int total;
+  final int loteCount;
+  final VoidCallback onBack;
+
+  const _Header({
+    required this.total,
+    required this.loteCount,
+    required this.onBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 8, 22, 0),
+      child: Row(
+        children: [
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(BovaraRadius.sm),
+            child: InkWell(
+              onTap: onBack,
+              borderRadius: BorderRadius.circular(BovaraRadius.sm),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  border: Border.all(color: BovaraColors.border, width: 1.5),
+                  borderRadius: BorderRadius.circular(BovaraRadius.sm),
                 ),
-                prefixIcon: Icon(Icons.search, color: Color(0xFF616161)),
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                child: const Icon(Icons.arrow_back_ios_new,
+                    size: 14, color: BovaraColors.textPrimary),
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 40,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: tabs.length,
-              itemBuilder: (context, index) {
-                final isSelected = selectedTabIndex == index;
-                return Padding(
-                  padding: EdgeInsets.only(right: index < tabs.length - 1 ? 8 : 0),
-                  child: _buildFilterTab(
-                    label: tabs[index],
-                    isSelected: isSelected,
-                    onTap: () => setState(() => selectedTabIndex = index),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Mi hato',
+                  style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.23,
                   ),
-                );
-              },
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$total ${total == 1 ? 'animal' : 'animales'}'
+                  '${loteCount > 0 ? ' · $loteCount ${loteCount == 1 ? 'lote' : 'lotes'}' : ''}',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
+                ),
+              ],
             ),
+          ),
+          // Menú lines (placeholder)
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(13),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                  spreadRadius: -6,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.tune_rounded, size: 20, color: BovaraColors.textPrimary),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildFilterTab({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
+// ═════════════════════════════════════════════════════════════════
+// SEARCH BAR
+// ═════════════════════════════════════════════════════════════════
+
+class _SearchBar extends StatelessWidget {
+  final TextEditingController controller;
+  const _SearchBar({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 14, 22, 0),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF2E7D32) : Colors.white,
-          borderRadius: BorderRadius.circular(9999),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(BovaraRadius.md),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x0D000000),
-              blurRadius: 2,
-              offset: Offset(0, 1),
+              color: Color(0x18000000),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+              spreadRadius: -8,
             ),
           ],
         ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: isSelected ? Colors.white : const Color(0xFF616161),
+        child: Row(
+          children: [
+            const SizedBox(width: 16),
+            const Icon(Icons.search, size: 18, color: BovaraColors.textMuted),
+            const SizedBox(width: 11),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                style: BovaraText.body(size: 14, color: BovaraColors.textPrimary),
+                cursorColor: BovaraColors.primary,
+                decoration: InputDecoration(
+                  hintText: 'Buscar por arete, nombre o lote…',
+                  hintStyle: BovaraText.body(size: 14, color: BovaraColors.textDisabled),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: 12),
+          ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildCattleList() {
-    if (isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
-      );
-    }
+// ═════════════════════════════════════════════════════════════════
+// FILTER CHIPS
+// ═════════════════════════════════════════════════════════════════
 
-    if (errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 64, color: Color(0xFFEF4444)),
-              const SizedBox(height: 16),
-              Text(
-                'Error al cargar las vacas',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[800],
+class _FilterChips extends StatelessWidget {
+  final List<String> filters;
+  final String selected;
+  final ValueChanged<String> onSelect;
+
+  const _FilterChips({
+    required this.filters,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 0),
+        itemCount: filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final f = filters[i];
+          final isSel = f == selected;
+          return InkWell(
+            onTap: () => onSelect(f),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              decoration: BoxDecoration(
+                color: isSel ? BovaraColors.darkBar : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: isSel
+                    ? null
+                    : const [
+                        BoxShadow(
+                          color: Color(0x18000000),
+                          blurRadius: 8,
+                          offset: Offset(0, 3),
+                          spreadRadius: -5,
+                        ),
+                      ],
+              ),
+              child: Center(
+                child: Text(
+                  f,
+                  style: BovaraText.label(
+                    size: 12.5,
+                    color: isSel ? Colors.white : BovaraColors.textPrimary,
+                  ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                errorMessage!,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: _loadCattle,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Reintentar'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (filteredCattle.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.agriculture_outlined,
-                size: 64,
-                color: Colors.grey[300],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No hay vacas registradas',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Agrega tu primera vaca usando el botón de abajo',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // ✅ AGREGADO: RefreshIndicator para Pull-to-Refresh
-    return RefreshIndicator(
-      color: const Color(0xFF2E7D32),
-      onRefresh: _loadCattle,
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: filteredCattle.length,
-        itemBuilder: (context, index) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _buildCattleCard(filteredCattle[index]),
+            ),
           );
         },
       ),
     );
   }
+}
 
-  Widget _buildCattleCard(CattleModel cattle) {
-    return GestureDetector(
-      onTap: () async {
-        // ✅ ESPERAR RESULTADO DEL DETALLE
-        final result = await context.push('/cattle/${cattle.id}', extra: cattle);
+// ═════════════════════════════════════════════════════════════════
+// CARD DE VACA
+// ═════════════════════════════════════════════════════════════════
 
-        // Si se editó o eliminó, recargar
-        if (result == true && mounted) {
-          _loadCattle();
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0D000000),
-              blurRadius: 2,
-              offset: Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${cattle.name} – ${cattle.lote}',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF222222),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Arete: ${cattle.tag}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF616161),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF388E3C).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(9999),
-                  ),
-                  child: const Text(
-                    'Activa',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF388E3C),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Raza: ',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF222222),
-                      ),
-                    ),
-                    Text(
-                      cattle.breed,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Color(0xFF616161),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Text(
-                      'Último parto: ',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF222222),
-                      ),
-                    ),
-                    Text(
-                      cattle.formattedLastBirth,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Color(0xFF616161),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Align(
-              alignment: Alignment.centerRight,
-              child: Icon(
-                Icons.chevron_right,
-                color: Color(0xFF2E7D32),
-                size: 24,
+class _CattleCard extends StatelessWidget {
+  final CattleModel cattle;
+  final VoidCallback onTap;
+
+  const _CattleCard({required this.cattle, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _statusFor(cattle);
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x18000000),
+                blurRadius: 16,
+                offset: Offset(0, 6),
+                spreadRadius: -10,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAddButton() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
+            ],
           ),
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: ElevatedButton(
-          onPressed: _showAddCattleForm,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2E7D32),
-            foregroundColor: Colors.white,
-            minimumSize: const Size(double.infinity, 60),
-            elevation: 6,
-            shadowColor: Colors.black.withValues(alpha: 0.1),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Row(
             children: [
-              Icon(Icons.add, size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Agregar vaca',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              _CattleAvatar(cattle: cattle),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          '#${_shortId(cattle.id)}',
+                          style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.1,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Flexible(
+                          child: Text(
+                            cattle.name,
+                            style: BovaraText.body(size: 13, color: BovaraColors.textSecondary)
+                                .copyWith(fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _metaFor(cattle),
+                      style: BovaraText.label(size: 12, color: BovaraColors.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _StatusBadge(status: status),
+                  const SizedBox(height: 6),
+                  const Icon(Icons.chevron_right,
+                      size: 18, color: BovaraColors.textDisabled),
+                ],
               ),
             ],
           ),
@@ -590,317 +484,167 @@ class _CattleListPageState extends State<CattleListPage> {
     );
   }
 
-  @override
-  void dispose() {
-    searchController.dispose();
-    super.dispose();
+  String _shortId(String id) {
+    // Muestra los primeros 3 chars del UUID para tener un "arete corto"
+    return id.replaceAll('-', '').substring(0, 3).toUpperCase();
+  }
+
+  String _metaFor(CattleModel c) {
+    final parts = <String>[c.lote];
+    if (c.weight != null) parts.add('${c.weight!.toStringAsFixed(0)} kg');
+    if (c.age != null) parts.add('${c.age} ${c.age == 1 ? 'año' : 'años'}');
+    return parts.join(' · ');
+  }
+
+  _CattleStatus _statusFor(CattleModel c) {
+    // Placeholder: sin campo de estado en el modelo aún.
+    // Cuando integremos el ml-service para clustering se conecta aquí.
+    if (c.clusterLabel == 'Alta Atención Médica') return _CattleStatus.pending;
+    if (c.clusterLabel == 'Ganado en Tratamiento') return _CattleStatus.pending;
+    return _CattleStatus.ok;
   }
 }
 
-// ============================================
-// FORMULARIO PARA AGREGAR VACA (SIN CAMBIOS)
-// ============================================
-
-class AddCattleForm extends StatefulWidget {
-  final Function(CattleModel) onSave;
-
-  const AddCattleForm({
-    super.key,
-    required this.onSave,
-  });
+// Avatar circular con inicial. En el futuro, si se agrega URL de foto,
+// aquí se pone Image.network con fallback.
+class _CattleAvatar extends StatelessWidget {
+  final CattleModel cattle;
+  const _CattleAvatar({required this.cattle});
 
   @override
-  State<AddCattleForm> createState() => _AddCattleFormState();
-}
+  Widget build(BuildContext context) {
+    final hasPhoto = cattle.photoUrl != null && cattle.photoUrl!.isNotEmpty;
+    final initial = cattle.name.isNotEmpty ? cattle.name[0].toUpperCase() : '?';
 
-class _AddCattleFormState extends State<AddCattleForm> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController loteController = TextEditingController();
-  final TextEditingController breedController = TextEditingController();
-  final TextEditingController birthDateController = TextEditingController();
-  final TextEditingController weightController = TextEditingController();
-  final TextEditingController lastBirthController = TextEditingController();
-
-  String selectedGender = 'female';
-
-  void _saveForm() {
-    if (_formKey.currentState!.validate()) {
-      DateTime? birthDate;
-      DateTime? lastBirth;
-
-      if (birthDateController.text.isNotEmpty) {
-        final parts = birthDateController.text.split('/');
-        birthDate = DateTime(
-          int.parse(parts[2]),
-          int.parse(parts[1]),
-          int.parse(parts[0]),
-        );
-      }
-
-      if (lastBirthController.text.isNotEmpty) {
-        final parts = lastBirthController.text.split('/');
-        lastBirth = DateTime(
-          int.parse(parts[2]),
-          int.parse(parts[1]),
-          int.parse(parts[0]),
-        );
-      }
-
-      final newCattle = CattleModel(
-        id: '',
-        name: nameController.text.toUpperCase(),
-        lote: loteController.text,
-        breed: breedController.text,
-        gender: selectedGender,
-        birthDate: birthDate,
-        weight: double.tryParse(weightController.text),
-        fechaUltimoParto: lastBirth,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+    if (hasPhoto) {
+      return ClipOval(
+        child: Image.network(
+          cattle.photoUrl!,
+          width: 54,
+          height: 54,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) =>
+              progress == null ? child : _InitialFallback(initial: initial),
+          errorBuilder: (_, __, ___) => _InitialFallback(initial: initial),
+        ),
       );
-
-      widget.onSave(newCattle);
     }
+    return _InitialFallback(initial: initial);
   }
+}
+
+class _InitialFallback extends StatelessWidget {
+  final String initial;
+  const _InitialFallback({required this.initial});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
+      width: 54,
+      height: 54,
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment(-0.3, -1),
+          end: Alignment(0.7, 1),
+          colors: [Color(0xFFD7A883), Color(0xFFB58453)],
+        ),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: BovaraText.title(color: Colors.white).copyWith(
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(
-              color: Color(0xFF2E7D32),
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(24),
-                topRight: Radius.circular(24),
-              ),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Agregar nueva vaca',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildLabel('Nombre de la vaca *'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: nameController,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: _inputDecoration(
-                        hint: 'Ej: PALOMA',
-                        icon: Icons.agriculture,
-                      ),
-                      validator: (value) => value!.isEmpty ? 'Requerido' : null,
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Lote *'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: loteController,
-                      decoration: _inputDecoration(
-                        hint: 'Ej: Lote A',
-                        icon: Icons.folder,
-                      ),
-                      validator: (value) => value!.isEmpty ? 'Requerido' : null,
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Raza *'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: breedController,
-                      decoration: _inputDecoration(
-                        hint: 'Ej: Holstein',
-                        icon: Icons.category,
-                      ),
-                      validator: (value) => value!.isEmpty ? 'Requerido' : null,
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Género *'),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: selectedGender,
-                      decoration: _inputDecoration(
-                        hint: 'Selecciona',
-                        icon: Icons.wc,
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'female', child: Text('Hembra')),
-                        DropdownMenuItem(value: 'male', child: Text('Macho')),
-                      ],
-                      onChanged: (value) => setState(() => selectedGender = value!),
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Fecha de nacimiento'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: birthDateController,
-                      readOnly: true,
-                      decoration: _inputDecoration(
-                        hint: 'DD/MM/AAAA',
-                        icon: Icons.cake,
-                      ),
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now().subtract(const Duration(days: 730)),
-                          firstDate: DateTime(2010),
-                          lastDate: DateTime.now(),
-                        );
-                        if (date != null) {
-                          birthDateController.text =
-                          '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Peso (kg)'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: weightController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: _inputDecoration(
-                        hint: 'Ej: 450',
-                        icon: Icons.monitor_weight,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel('Último parto (opcional)'),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: lastBirthController,
-                      readOnly: true,
-                      decoration: _inputDecoration(
-                        hint: 'DD/MM/AAAA',
-                        icon: Icons.event,
-                      ),
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime.now(),
-                        );
-                        if (date != null) {
-                          lastBirthController.text =
-                          '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 32),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton(
-                        onPressed: _saveForm,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2E7D32),
-                          foregroundColor: Colors.white,
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Guardar vaca',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
+}
 
-  Widget _buildLabel(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: Color(0xFF222222),
-      ),
-    );
-  }
+enum _CattleStatus { ok, celo, pending }
 
-  InputDecoration _inputDecoration({
-    required String hint,
-    required IconData icon,
-  }) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: Color(0xFFADAEBC), fontSize: 16),
-      prefixIcon: Icon(icon, color: const Color(0xFF2E7D32)),
-      filled: true,
-      fillColor: const Color(0xFFF9FAFB),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFDC2626)),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-    );
-  }
+class _StatusBadge extends StatelessWidget {
+  final _CattleStatus status;
+  const _StatusBadge({required this.status});
 
   @override
-  void dispose() {
-    nameController.dispose();
-    loteController.dispose();
-    breedController.dispose();
-    birthDateController.dispose();
-    weightController.dispose();
-    lastBirthController.dispose();
-    super.dispose();
+  Widget build(BuildContext context) {
+    final (bg, fg, label) = switch (status) {
+      _CattleStatus.ok => (
+        BovaraColors.primarySoftBg,
+        BovaraColors.primarySoftText,
+        'Al día',
+      ),
+      _CattleStatus.celo => (
+        BovaraColors.celoSoftBg,
+        BovaraColors.celo,
+        'En celo',
+      ),
+      _CattleStatus.pending => (
+        BovaraColors.warningSoftBg,
+        const Color(0xFFA86A1E),
+        'Pendiente',
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      child: Text(
+        label,
+        style: BovaraText.label(size: 10.5, color: fg).copyWith(letterSpacing: 0.2),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// FAB NUEVA VACA
+// ═════════════════════════════════════════════════════════════════
+
+class _NewCattleFab extends StatelessWidget {
+  final VoidCallback onTap;
+  const _NewCattleFab({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(28),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment(-0.3, -1),
+              end: Alignment(0.5, 1),
+              colors: [Color(0xFF3DA35D), BovaraColors.primary],
+            ),
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: BovaraColors.primary.withValues(alpha: 0.75),
+                blurRadius: 30,
+                offset: const Offset(0, 14),
+                spreadRadius: -10,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.add, color: Colors.white, size: 20),
+              const SizedBox(width: 9),
+              Text(
+                'Nueva vaca',
+                style: BovaraText.label(size: 14, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

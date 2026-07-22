@@ -1,0 +1,2578 @@
+diff --git a/lib/core/config/api_config.dart b/lib/core/config/api_config.dart
+index 861dbc3..d3471fe 100644
+--- a/lib/core/config/api_config.dart
++++ b/lib/core/config/api_config.dart
+@@ -21,6 +21,10 @@ class ApiConfig {
+   static const String ranchesEndpoint = '/api/v1/ranches/';
+   static const String cattleEndpoint = '/api/v1/cattle';
+ 
++  // Recordatorios (calendario / tareas)
++  static const String remindersEndpoint = '/api/v1/reminders';
++  static const String remindersTodayEndpoint = '/api/v1/reminders/today';
++
+   // Chatbot
+   static const String chatEndpoint = '/api/v1/chat/';
+   static const String chatHealthEndpoint = '/api/v1/chat/health';
+diff --git a/lib/core/router/app_router.dart b/lib/core/router/app_router.dart
+index 8b242a5..2811fcf 100644
+--- a/lib/core/router/app_router.dart
++++ b/lib/core/router/app_router.dart
+@@ -9,6 +9,7 @@ import '../../features/auth/presentation/pages/signup_page.dart';
+ import '../../features/home/presentation/pages/dashboard_page.dart';
+ import '../../features/profile/presentation/pages/account_page.dart';
+ import '../../features/notifications/presentation/pages/reminders_page.dart';
++import '../../features/notifications/presentation/pages/calendar_page.dart';
+ import '../../features/profile/presentation/pages/privacy_security_page.dart';
+ import '../../features/cattle/presentation/pages/cattle_list_page.dart';
+ import '../../features/cattle/presentation/pages/cattle_new_page.dart';
+@@ -51,6 +52,10 @@ final appRouter = GoRouter(
+       path: '/reminders',
+       builder: (context, state) => const RemindersPage(),
+     ),
++    GoRoute(
++      path: '/calendar',
++      builder: (context, state) => const CalendarPage(),
++    ),
+     GoRoute(
+       path: '/account',
+       builder: (context, state) => const AccountPage(),
+diff --git a/lib/features/home/presentation/pages/dashboard_page.dart b/lib/features/home/presentation/pages/dashboard_page.dart
+index 84c7be2..3566d42 100644
+--- a/lib/features/home/presentation/pages/dashboard_page.dart
++++ b/lib/features/home/presentation/pages/dashboard_page.dart
+@@ -1055,11 +1055,69 @@ class _PanelTareas extends StatelessWidget {
+           dotColor: BovaraColors.info,
+           dotBg: const Color(0xFFE3ECFD),
+         ),
++        const SizedBox(height: 12),
++        // Botones de navegación a las dos vistas completas
++        Row(
++          children: [
++            Expanded(
++              child: _PanelLinkBtn(
++                icon: Icons.checklist_rounded,
++                label: 'Ver tareas',
++                onTap: () => context.push('/reminders'),
++              ),
++            ),
++            const SizedBox(width: 8),
++            Expanded(
++              child: _PanelLinkBtn(
++                icon: Icons.calendar_month_rounded,
++                label: 'Calendario',
++                onTap: () => context.push('/calendar'),
++              ),
++            ),
++          ],
++        ),
+       ],
+     );
+   }
+ }
+ 
++class _PanelLinkBtn extends StatelessWidget {
++  final IconData icon;
++  final String label;
++  final VoidCallback onTap;
++
++  const _PanelLinkBtn({
++    required this.icon,
++    required this.label,
++    required this.onTap,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return InkWell(
++      onTap: onTap,
++      borderRadius: BorderRadius.circular(12),
++      child: Container(
++        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
++        decoration: BoxDecoration(
++          color: BovaraColors.primarySoftBg,
++          borderRadius: BorderRadius.circular(12),
++        ),
++        child: Row(
++          mainAxisAlignment: MainAxisAlignment.center,
++          children: [
++            Icon(icon, size: 15, color: BovaraColors.primarySoftText),
++            const SizedBox(width: 7),
++            Text(label,
++                style: BovaraText.label(
++                    size: 12.5, color: BovaraColors.primarySoftText)),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
+ class _PendingTaskRow extends StatelessWidget {
+   final String title;
+   final String subtitle;
+diff --git a/lib/features/notifications/data/models/reminder_model.dart b/lib/features/notifications/data/models/reminder_model.dart
+new file mode 100644
+index 0000000..14dc271
+--- /dev/null
++++ b/lib/features/notifications/data/models/reminder_model.dart
+@@ -0,0 +1,162 @@
++// lib/features/notifications/data/models/reminder_model.dart
++//
++// Modelo de recordatorio (reminder) que refleja EXACTAMENTE el schema
++// ReminderResponse del backend (core-service/src/schemas/reminder.py).
++
++/// Tipos de recordatorio permitidos por el backend (pattern regex).
++/// Debe coincidir 1:1 con ReminderBase.reminder_type en el backend.
++enum ReminderType {
++  vaccine,
++  checkup,
++  treatment,
++  feeding,
++  breeding,
++  other;
++
++  String get api => name;
++
++  static ReminderType fromApi(String value) {
++    return ReminderType.values.firstWhere(
++      (t) => t.name == value,
++      orElse: () => ReminderType.other,
++    );
++  }
++
++  String get display {
++    switch (this) {
++      case ReminderType.vaccine:
++        return 'Vacuna';
++      case ReminderType.checkup:
++        return 'Chequeo';
++      case ReminderType.treatment:
++        return 'Tratamiento';
++      case ReminderType.feeding:
++        return 'Alimentación';
++      case ReminderType.breeding:
++        return 'Celo / Reproducción';
++      case ReminderType.other:
++        return 'Otro';
++    }
++  }
++}
++
++enum ReminderStatus {
++  pending,
++  completed,
++  cancelled;
++
++  String get api => name;
++
++  static ReminderStatus fromApi(String value) {
++    return ReminderStatus.values.firstWhere(
++      (s) => s.name == value,
++      orElse: () => ReminderStatus.pending,
++    );
++  }
++}
++
++class ReminderModel {
++  final String id;
++  final String? cattleId;
++  final String? userId;
++  final String title;
++  final String? description;
++  final DateTime reminderDate;
++  final ReminderType type;
++  final ReminderStatus status;
++  final String? healthEventId;
++  final DateTime? completedAt;
++  final DateTime createdAt;
++  final DateTime updatedAt;
++
++  const ReminderModel({
++    required this.id,
++    this.cattleId,
++    this.userId,
++    required this.title,
++    this.description,
++    required this.reminderDate,
++    required this.type,
++    required this.status,
++    this.healthEventId,
++    this.completedAt,
++    required this.createdAt,
++    required this.updatedAt,
++  });
++
++  factory ReminderModel.fromJson(Map<String, dynamic> json) {
++    return ReminderModel(
++      id: json['id']?.toString() ?? '',
++      cattleId: json['cattle_id']?.toString(),
++      userId: json['user_id']?.toString(),
++      title: json['title'] ?? '',
++      description: json['description'],
++      reminderDate: DateTime.parse(json['reminder_date']),
++      type: ReminderType.fromApi(json['reminder_type'] ?? 'other'),
++      status: ReminderStatus.fromApi(json['status'] ?? 'pending'),
++      healthEventId: json['health_event_id']?.toString(),
++      completedAt: json['completed_at'] != null
++          ? DateTime.parse(json['completed_at'])
++          : null,
++      createdAt: DateTime.parse(json['created_at']),
++      updatedAt: DateTime.parse(json['updated_at']),
++    );
++  }
++
++  /// Para crear un recordatorio (POST). Solo campos permitidos por ReminderBase.
++  Map<String, dynamic> toCreateJson() {
++    return {
++      if (cattleId != null) 'cattle_id': cattleId,
++      'title': title,
++      if (description != null) 'description': description,
++      'reminder_date': _formatDate(reminderDate),
++      'reminder_type': type.api,
++    };
++  }
++
++  bool get isPending => status == ReminderStatus.pending;
++  bool get isCompleted => status == ReminderStatus.completed;
++  bool get isCancelled => status == ReminderStatus.cancelled;
++
++  /// Está vencido si es pending y su fecha ya pasó.
++  bool get isOverdue {
++    if (!isPending) return false;
++    final now = DateTime.now();
++    final today = DateTime(now.year, now.month, now.day);
++    final rem = DateTime(reminderDate.year, reminderDate.month, reminderDate.day);
++    return rem.isBefore(today);
++  }
++
++  /// Es de hoy si su fecha es la fecha actual (independiente del status).
++  bool get isToday {
++    final now = DateTime.now();
++    return reminderDate.year == now.year &&
++        reminderDate.month == now.month &&
++        reminderDate.day == now.day;
++  }
++
++  /// Formato YYYY-MM-DD que espera el backend.
++  static String _formatDate(DateTime d) =>
++      '${d.year.toString().padLeft(4, '0')}-'
++      '${d.month.toString().padLeft(2, '0')}-'
++      '${d.day.toString().padLeft(2, '0')}';
++
++  ReminderModel copyWith({
++    ReminderStatus? status,
++    DateTime? completedAt,
++  }) =>
++      ReminderModel(
++        id: id,
++        cattleId: cattleId,
++        userId: userId,
++        title: title,
++        description: description,
++        reminderDate: reminderDate,
++        type: type,
++        status: status ?? this.status,
++        healthEventId: healthEventId,
++        completedAt: completedAt ?? this.completedAt,
++        createdAt: createdAt,
++        updatedAt: updatedAt,
++      );
++}
+diff --git a/lib/features/notifications/data/services/reminder_service.dart b/lib/features/notifications/data/services/reminder_service.dart
+new file mode 100644
+index 0000000..05b97ad
+--- /dev/null
++++ b/lib/features/notifications/data/services/reminder_service.dart
+@@ -0,0 +1,174 @@
++// lib/features/notifications/data/services/reminder_service.dart
++//
++// Servicio de recordatorios. Mapea 1:1 con los endpoints de
++// core-service/src/api/v1/reminder.py:
++//
++//   POST   /reminders               → createReminder
++//   GET    /reminders               → listReminders (filtros: status, rango de fechas)
++//   GET    /reminders/today         → todayReminders
++//   GET    /reminders/{id}          → getReminder
++//   PUT    /reminders/{id}          → updateReminder
++//   PATCH  /reminders/{id}/complete → completeReminder
++//   DELETE /reminders/{id}          → deleteReminder
++
++import 'dart:convert';
++import 'package:http/http.dart' as http;
++
++import '../../../../core/config/api_config.dart';
++import '../../../../core/services/auth_service.dart';
++import '../models/reminder_model.dart';
++
++class ReminderService {
++  final AuthService _auth = AuthService();
++
++  Future<Map<String, String>> _headers() async {
++    final token = await _auth.getToken();
++    return {
++      'Content-Type': 'application/json',
++      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
++    };
++  }
++
++  // ─────────── READ ───────────
++
++  /// Listado con filtros opcionales.
++  /// - [status]: 'pending' | 'completed' | 'cancelled'
++  /// - [startDate], [endDate]: filtran por reminder_date (YYYY-MM-DD).
++  Future<List<ReminderModel>> listReminders({
++    ReminderStatus? status,
++    DateTime? startDate,
++    DateTime? endDate,
++    int skip = 0,
++    int limit = 100,
++  }) async {
++    final params = <String, String>{
++      'skip': '$skip',
++      'limit': '$limit',
++      if (status != null) 'status': status.api,
++      if (startDate != null) 'start_date': _fmt(startDate),
++      if (endDate != null) 'end_date': _fmt(endDate),
++    };
++    final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}')
++        .replace(queryParameters: params);
++
++    final resp = await http.get(uri, headers: await _headers());
++    _ensureOk(resp, 'listar recordatorios');
++    final list = jsonDecode(utf8.decode(resp.bodyBytes)) as List;
++    return list.map((j) => ReminderModel.fromJson(j)).toList();
++  }
++
++  /// Solo recordatorios de HOY. Endpoint dedicado en el backend.
++  Future<List<ReminderModel>> todayReminders() async {
++    final uri =
++        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersTodayEndpoint}');
++    final resp = await http.get(uri, headers: await _headers());
++    _ensureOk(resp, 'recordatorios de hoy');
++    final list = jsonDecode(utf8.decode(resp.bodyBytes)) as List;
++    return list.map((j) => ReminderModel.fromJson(j)).toList();
++  }
++
++  /// Un recordatorio por ID.
++  Future<ReminderModel> getReminder(String id) async {
++    final uri =
++        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}/$id');
++    final resp = await http.get(uri, headers: await _headers());
++    _ensureOk(resp, 'obtener recordatorio');
++    return ReminderModel.fromJson(jsonDecode(utf8.decode(resp.bodyBytes)));
++  }
++
++  // ─────────── WRITE ───────────
++
++  /// Crear un recordatorio. Devuelve el modelo con id, timestamps y user_id.
++  Future<ReminderModel> createReminder({
++    required String title,
++    required DateTime reminderDate,
++    required ReminderType type,
++    String? description,
++    String? cattleId,
++  }) async {
++    final body = jsonEncode({
++      'title': title,
++      'reminder_date': _fmt(reminderDate),
++      'reminder_type': type.api,
++      if (description != null && description.isNotEmpty)
++        'description': description,
++      if (cattleId != null) 'cattle_id': cattleId,
++    });
++
++    final uri =
++        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}');
++    final resp = await http.post(uri, headers: await _headers(), body: body);
++    _ensureOk(resp, 'crear recordatorio', expected: 201);
++    return ReminderModel.fromJson(jsonDecode(utf8.decode(resp.bodyBytes)));
++  }
++
++  /// Editar campos parciales (envía solo los que no son null).
++  Future<ReminderModel> updateReminder(
++    String id, {
++    String? title,
++    String? description,
++    DateTime? reminderDate,
++    ReminderType? type,
++    ReminderStatus? status,
++    String? cattleId,
++  }) async {
++    final payload = <String, dynamic>{
++      if (title != null) 'title': title,
++      if (description != null) 'description': description,
++      if (reminderDate != null) 'reminder_date': _fmt(reminderDate),
++      if (type != null) 'reminder_type': type.api,
++      if (status != null) 'status': status.api,
++      if (cattleId != null) 'cattle_id': cattleId,
++    };
++    final uri =
++        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}/$id');
++    final resp = await http.put(
++      uri,
++      headers: await _headers(),
++      body: jsonEncode(payload),
++    );
++    _ensureOk(resp, 'actualizar recordatorio');
++    return ReminderModel.fromJson(jsonDecode(utf8.decode(resp.bodyBytes)));
++  }
++
++  /// Marcar como completado (endpoint dedicado, más simple que PUT).
++  Future<ReminderModel> completeReminder(String id) async {
++    final uri = Uri.parse(
++        '${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}/$id/complete');
++    final resp = await http.patch(uri, headers: await _headers());
++    _ensureOk(resp, 'completar recordatorio');
++    return ReminderModel.fromJson(jsonDecode(utf8.decode(resp.bodyBytes)));
++  }
++
++  Future<void> deleteReminder(String id) async {
++    final uri =
++        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.remindersEndpoint}/$id');
++    final resp = await http.delete(uri, headers: await _headers());
++    // 204 No Content en éxito.
++    if (resp.statusCode != 204) {
++      throw Exception(
++        'No pude eliminar el recordatorio (${resp.statusCode}): ${resp.body}',
++      );
++    }
++  }
++
++  // ─────────── helpers ───────────
++
++  void _ensureOk(http.Response resp, String action, {int expected = 200}) {
++    if (resp.statusCode == expected) return;
++    // El backend devuelve {"detail": "..."} en errores.
++    String detail = resp.body;
++    try {
++      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
++      if (decoded is Map && decoded['detail'] != null) {
++        detail = decoded['detail'].toString();
++      }
++    } catch (_) {}
++    throw Exception('No pude $action (${resp.statusCode}): $detail');
++  }
++
++  String _fmt(DateTime d) =>
++      '${d.year.toString().padLeft(4, '0')}-'
++      '${d.month.toString().padLeft(2, '0')}-'
++      '${d.day.toString().padLeft(2, '0')}';
++}
+diff --git a/lib/features/notifications/presentation/pages/calendar_page.dart b/lib/features/notifications/presentation/pages/calendar_page.dart
+new file mode 100644
+index 0000000..085d6ef
+--- /dev/null
++++ b/lib/features/notifications/presentation/pages/calendar_page.dart
+@@ -0,0 +1,819 @@
++// lib/features/notifications/presentation/pages/calendar_page.dart
++//
++// Calendario (Grupo F · Calendario del rediseño).
++//
++// Estructura:
++//   - Header: título "Calendario" + navegador de mes (◀ Marzo 2026 ▶).
++//   - Card blanca con grid 7×N: L M M J V S D + días numerados,
++//     cada día con un pequeño dot de color si tiene eventos.
++//   - Leyenda: Vacuna / Chequeo / Celo / Otro con puntos de colores.
++//   - Lista de eventos del día seleccionado con hora + título + tag.
++//   - FAB "+" con gradient verde para registro rápido (bottom sheet con
++//     opciones: Nueva vaca, Registrar celo, Registrar vacuna).
++//
++// LÓGICA CONECTADA REAL: carga los recordatorios del mes visible con
++// ReminderService.listReminders(startDate, endDate).
++
++import 'package:flutter/material.dart';
++import 'package:go_router/go_router.dart';
++
++import '../../../../core/theme/theme.dart';
++import '../../data/models/reminder_model.dart';
++import '../../data/services/reminder_service.dart';
++
++class CalendarPage extends StatefulWidget {
++  const CalendarPage({super.key});
++
++  @override
++  State<CalendarPage> createState() => _CalendarPageState();
++}
++
++class _CalendarPageState extends State<CalendarPage> {
++  final _service = ReminderService();
++
++  late DateTime _visibleMonth;
++  late DateTime _selectedDay;
++  List<ReminderModel> _monthReminders = [];
++  bool _loading = true;
++
++  @override
++  void initState() {
++    super.initState();
++    final now = DateTime.now();
++    _visibleMonth = DateTime(now.year, now.month);
++    _selectedDay = DateTime(now.year, now.month, now.day);
++    _load();
++  }
++
++  Future<void> _load() async {
++    setState(() => _loading = true);
++    try {
++      final start = DateTime(_visibleMonth.year, _visibleMonth.month, 1);
++      final end = DateTime(_visibleMonth.year, _visibleMonth.month + 1, 0);
++      final list = await _service.listReminders(
++        startDate: start,
++        endDate: end,
++        limit: 100,
++      );
++      if (!mounted) return;
++      setState(() {
++        _monthReminders = list;
++        _loading = false;
++      });
++    } catch (_) {
++      if (!mounted) return;
++      setState(() => _loading = false);
++    }
++  }
++
++  void _prevMonth() {
++    setState(() {
++      _visibleMonth = DateTime(_visibleMonth.year, _visibleMonth.month - 1);
++    });
++    _load();
++  }
++
++  void _nextMonth() {
++    setState(() {
++      _visibleMonth = DateTime(_visibleMonth.year, _visibleMonth.month + 1);
++    });
++    _load();
++  }
++
++  List<ReminderModel> _remindersOfDay(DateTime day) {
++    return _monthReminders.where((r) {
++      final d = r.reminderDate;
++      return d.year == day.year && d.month == day.month && d.day == day.day;
++    }).toList()
++      ..sort((a, b) => a.reminderDate.compareTo(b.reminderDate));
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final selectedEvents = _remindersOfDay(_selectedDay);
++    return Scaffold(
++      backgroundColor: BovaraColors.surfaceAlt,
++      body: SafeArea(
++        bottom: false,
++        child: Stack(
++          children: [
++            Column(
++              children: [
++                _Header(
++                  visibleMonth: _visibleMonth,
++                  onBack: () => context.go('/home'),
++                  onPrev: _prevMonth,
++                  onNext: _nextMonth,
++                ),
++                _CalendarGrid(
++                  visibleMonth: _visibleMonth,
++                  selectedDay: _selectedDay,
++                  remindersOfDay: _remindersOfDay,
++                  onSelectDay: (d) => setState(() => _selectedDay = d),
++                ),
++                Expanded(
++                  child: _loading
++                      ? const Center(
++                          child: CircularProgressIndicator(color: BovaraColors.primary))
++                      : _DayEventsList(
++                          selectedDay: _selectedDay,
++                          events: selectedEvents,
++                        ),
++                ),
++              ],
++            ),
++            Positioned(
++              right: 20,
++              bottom: 26 + MediaQuery.of(context).padding.bottom,
++              child: _QuickAddFab(onTap: _showQuickAddSheet),
++            ),
++          ],
++        ),
++      ),
++    );
++  }
++
++  void _showQuickAddSheet() {
++    showModalBottomSheet<void>(
++      context: context,
++      backgroundColor: Colors.transparent,
++      builder: (_) => _QuickAddSheet(
++        onNewCattle: () {
++          Navigator.pop(context);
++          context.push('/cattle/new');
++        },
++        onNewReminder: () async {
++          Navigator.pop(context);
++          // Reusa el modal completo de la pantalla de Tareas
++          context.go('/reminders');
++        },
++      ),
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _Header extends StatelessWidget {
++  final DateTime visibleMonth;
++  final VoidCallback onBack;
++  final VoidCallback onPrev;
++  final VoidCallback onNext;
++
++  const _Header({
++    required this.visibleMonth,
++    required this.onBack,
++    required this.onPrev,
++    required this.onNext,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
++      child: Row(
++        children: [
++          Material(
++            color: Colors.white,
++            borderRadius: BorderRadius.circular(12),
++            child: InkWell(
++              onTap: onBack,
++              borderRadius: BorderRadius.circular(12),
++              child: Container(
++                width: 38,
++                height: 38,
++                decoration: BoxDecoration(
++                  border: Border.all(color: BovaraColors.border, width: 1.5),
++                  borderRadius: BorderRadius.circular(12),
++                ),
++                child: const Icon(Icons.arrow_back_ios_new,
++                    size: 14, color: BovaraColors.textPrimary),
++              ),
++            ),
++          ),
++          const SizedBox(width: 14),
++          Expanded(
++            child: Text(
++              'Calendario',
++              style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++                fontSize: 23,
++                fontWeight: FontWeight.w800,
++                letterSpacing: -0.23,
++              ),
++            ),
++          ),
++          // Nav de meses
++          _NavArrow(icon: Icons.chevron_left, onTap: onPrev),
++          const SizedBox(width: 6),
++          SizedBox(
++            width: 104,
++            child: Text(
++              _monthLabel(visibleMonth),
++              textAlign: TextAlign.center,
++              style: BovaraText.label(
++                size: 13,
++                color: BovaraColors.textPrimary,
++              ).copyWith(fontWeight: FontWeight.w800),
++            ),
++          ),
++          const SizedBox(width: 6),
++          _NavArrow(icon: Icons.chevron_right, onTap: onNext),
++        ],
++      ),
++    );
++  }
++
++  String _monthLabel(DateTime d) {
++    const meses = [
++      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
++      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
++    ];
++    return '${meses[d.month - 1]} ${d.year}';
++  }
++}
++
++class _NavArrow extends StatelessWidget {
++  final IconData icon;
++  final VoidCallback onTap;
++  const _NavArrow({required this.icon, required this.onTap});
++
++  @override
++  Widget build(BuildContext context) {
++    return Material(
++      color: Colors.white,
++      borderRadius: BorderRadius.circular(11),
++      child: InkWell(
++        onTap: onTap,
++        borderRadius: BorderRadius.circular(11),
++        child: Container(
++          width: 34,
++          height: 34,
++          alignment: Alignment.center,
++          decoration: BoxDecoration(
++            borderRadius: BorderRadius.circular(11),
++            boxShadow: const [
++              BoxShadow(
++                color: Color(0x14000000),
++                blurRadius: 8,
++                offset: Offset(0, 3),
++                spreadRadius: -5,
++              ),
++            ],
++          ),
++          child: Icon(icon, size: 20, color: BovaraColors.textPrimary),
++        ),
++      ),
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// GRID DE CALENDARIO
++// ═════════════════════════════════════════════════════════════════
++
++class _CalendarGrid extends StatelessWidget {
++  final DateTime visibleMonth;
++  final DateTime selectedDay;
++  final List<ReminderModel> Function(DateTime) remindersOfDay;
++  final ValueChanged<DateTime> onSelectDay;
++
++  const _CalendarGrid({
++    required this.visibleMonth,
++    required this.selectedDay,
++    required this.remindersOfDay,
++    required this.onSelectDay,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    // Empezamos en LUNES (weekday 1)
++    final firstOfMonth = DateTime(visibleMonth.year, visibleMonth.month, 1);
++    final daysInMonth =
++        DateTime(visibleMonth.year, visibleMonth.month + 1, 0).day;
++    // Offset para alinear el primer día bajo su weekday.
++    // weekday: 1=Lunes ... 7=Domingo → columna 0..6
++    final leadingBlanks = firstOfMonth.weekday - 1;
++    final totalCells = ((leadingBlanks + daysInMonth) / 7).ceil() * 7;
++
++    final today = DateTime.now();
++    final isThisMonth =
++        today.year == visibleMonth.year && today.month == visibleMonth.month;
++
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 14, 22, 0),
++      child: Container(
++        padding: const EdgeInsets.fromLTRB(14, 16, 14, 12),
++        decoration: BoxDecoration(
++          color: Colors.white,
++          borderRadius: BorderRadius.circular(24),
++          boxShadow: const [
++            BoxShadow(
++              color: Color(0x22000000),
++              blurRadius: 22,
++              offset: Offset(0, 8),
++              spreadRadius: -14,
++            ),
++          ],
++        ),
++        child: Column(
++          children: [
++            // Header L M M J V S D
++            Row(
++              children: const ['L', 'M', 'M', 'J', 'V', 'S', 'D']
++                  .map((c) => Expanded(
++                        child: Center(
++                          child: Text(
++                            c,
++                            style: TextStyle(
++                              fontSize: 10.5,
++                              fontWeight: FontWeight.w800,
++                              color: BovaraColors.textDisabled,
++                            ),
++                          ),
++                        ),
++                      ))
++                  .toList(),
++            ),
++            const SizedBox(height: 6),
++            // Grid
++            GridView.builder(
++              shrinkWrap: true,
++              physics: const NeverScrollableScrollPhysics(),
++              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
++                crossAxisCount: 7,
++                childAspectRatio: 1.0,
++                mainAxisSpacing: 2,
++                crossAxisSpacing: 2,
++              ),
++              itemCount: totalCells,
++              itemBuilder: (context, i) {
++                final dayNum = i - leadingBlanks + 1;
++                if (dayNum < 1 || dayNum > daysInMonth) {
++                  return const SizedBox.shrink();
++                }
++                final day = DateTime(visibleMonth.year, visibleMonth.month, dayNum);
++                final isToday = isThisMonth && dayNum == today.day;
++                final isSelected = day.year == selectedDay.year &&
++                    day.month == selectedDay.month &&
++                    day.day == selectedDay.day;
++                final events = remindersOfDay(day);
++
++                return _DayCell(
++                  day: dayNum,
++                  isToday: isToday,
++                  isSelected: isSelected,
++                  events: events,
++                  onTap: () => onSelectDay(day),
++                );
++              },
++            ),
++            const SizedBox(height: 10),
++            Divider(color: const Color(0xFFF2F3ED), height: 1),
++            const SizedBox(height: 10),
++            // Leyenda
++            Wrap(
++              spacing: 12,
++              runSpacing: 6,
++              alignment: WrapAlignment.center,
++              children: const [
++                _LegendDot(color: BovaraColors.info, label: 'Vacuna'),
++                _LegendDot(color: BovaraColors.primary, label: 'Chequeo'),
++                _LegendDot(color: BovaraColors.celo, label: 'Celo'),
++                _LegendDot(color: BovaraColors.warning, label: 'Otro'),
++              ],
++            ),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++class _DayCell extends StatelessWidget {
++  final int day;
++  final bool isToday;
++  final bool isSelected;
++  final List<ReminderModel> events;
++  final VoidCallback onTap;
++
++  const _DayCell({
++    required this.day,
++    required this.isToday,
++    required this.isSelected,
++    required this.events,
++    required this.onTap,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    final Color? bg = isSelected
++        ? BovaraColors.primary
++        : (isToday ? const Color(0xFFE7F2E9) : null);
++    final Color numColor = isSelected
++        ? Colors.white
++        : (isToday ? BovaraColors.primary : BovaraColors.textPrimary);
++
++    return InkWell(
++      onTap: onTap,
++      borderRadius: BorderRadius.circular(11),
++      child: Container(
++        decoration: BoxDecoration(
++          color: bg,
++          borderRadius: BorderRadius.circular(11),
++        ),
++        alignment: Alignment.center,
++        child: Column(
++          mainAxisAlignment: MainAxisAlignment.center,
++          children: [
++            Text(
++              '$day',
++              style: TextStyle(
++                fontSize: 12.5,
++                fontWeight: isToday || isSelected ? FontWeight.w800 : FontWeight.w600,
++                color: numColor,
++                height: 1.0,
++              ),
++            ),
++            const SizedBox(height: 3),
++            if (events.isEmpty)
++              const SizedBox(width: 5, height: 5)
++            else
++              Container(
++                width: 5,
++                height: 5,
++                decoration: BoxDecoration(
++                  color: isSelected ? Colors.white : _dotColor(events),
++                  shape: BoxShape.circle,
++                ),
++              ),
++          ],
++        ),
++      ),
++    );
++  }
++
++  Color _dotColor(List<ReminderModel> events) {
++    // Prioridad de color: celo > vacuna > checkup > otro
++    if (events.any((e) => e.type == ReminderType.breeding)) return BovaraColors.celo;
++    if (events.any((e) => e.type == ReminderType.vaccine)) return BovaraColors.info;
++    if (events.any((e) => e.type == ReminderType.checkup)) return BovaraColors.primary;
++    return BovaraColors.warning;
++  }
++}
++
++class _LegendDot extends StatelessWidget {
++  final Color color;
++  final String label;
++  const _LegendDot({required this.color, required this.label});
++
++  @override
++  Widget build(BuildContext context) {
++    return Row(
++      mainAxisSize: MainAxisSize.min,
++      children: [
++        Container(
++          width: 7,
++          height: 7,
++          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
++        ),
++        const SizedBox(width: 5),
++        Text(label,
++            style: BovaraText.label(size: 10.5, color: BovaraColors.textMuted)),
++      ],
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// LISTA DE EVENTOS DEL DÍA
++// ═════════════════════════════════════════════════════════════════
++
++class _DayEventsList extends StatelessWidget {
++  final DateTime selectedDay;
++  final List<ReminderModel> events;
++
++  const _DayEventsList({required this.selectedDay, required this.events});
++
++  @override
++  Widget build(BuildContext context) {
++    return SingleChildScrollView(
++      padding: const EdgeInsets.fromLTRB(22, 16, 22, 120),
++      child: Column(
++        crossAxisAlignment: CrossAxisAlignment.stretch,
++        children: [
++          Text(
++            _dayLabel(selectedDay),
++            style: BovaraText.heading()
++                .copyWith(fontSize: 14, fontWeight: FontWeight.w800),
++          ),
++          const SizedBox(height: 11),
++          if (events.isEmpty)
++            _EmptyDay()
++          else
++            for (final e in events) ...[
++              _EventCard(reminder: e),
++              const SizedBox(height: 10),
++            ],
++        ],
++      ),
++    );
++  }
++
++  static String _dayLabel(DateTime d) {
++    const dias = [
++      'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo',
++    ];
++    const meses = [
++      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
++      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
++    ];
++    return '${dias[d.weekday - 1]} ${d.day} de ${meses[d.month - 1]}';
++  }
++}
++
++class _EventCard extends StatelessWidget {
++  final ReminderModel reminder;
++  const _EventCard({required this.reminder});
++
++  @override
++  Widget build(BuildContext context) {
++    final color = _colorFor(reminder.type);
++    return Container(
++      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
++      decoration: BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(18),
++        border: Border(left: BorderSide(color: color, width: 4)),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x18000000),
++            blurRadius: 16,
++            offset: Offset(0, 6),
++            spreadRadius: -10,
++          ),
++        ],
++      ),
++      child: Row(
++        children: [
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text(reminder.title,
++                    style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
++                        .copyWith(fontWeight: FontWeight.w700)),
++                if (reminder.description != null && reminder.description!.isNotEmpty) ...[
++                  const SizedBox(height: 2),
++                  Text(reminder.description!,
++                      style: BovaraText.label(size: 12, color: BovaraColors.textMuted)),
++                ],
++              ],
++            ),
++          ),
++          const SizedBox(width: 8),
++          Container(
++            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
++            decoration: BoxDecoration(
++              color: _bgFor(reminder.type),
++              borderRadius: BorderRadius.circular(11),
++            ),
++            child: Text(
++              reminder.type.display,
++              style: BovaraText.label(size: 10.5, color: color),
++            ),
++          ),
++        ],
++      ),
++    );
++  }
++
++  Color _colorFor(ReminderType t) => switch (t) {
++        ReminderType.vaccine => BovaraColors.info,
++        ReminderType.breeding => BovaraColors.celoSoftText,
++        ReminderType.checkup => BovaraColors.primary,
++        ReminderType.treatment => BovaraColors.warning,
++        _ => BovaraColors.textSecondary,
++      };
++  Color _bgFor(ReminderType t) => switch (t) {
++        ReminderType.vaccine => BovaraColors.infoSoftBg,
++        ReminderType.breeding => BovaraColors.celoSoftBg,
++        ReminderType.checkup => BovaraColors.primarySoftBg,
++        ReminderType.treatment => BovaraColors.warningSoftBg,
++        _ => BovaraColors.surfaceAlt,
++      };
++}
++
++class _EmptyDay extends StatelessWidget {
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      padding: const EdgeInsets.all(22),
++      decoration: BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(18),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x18000000),
++            blurRadius: 16,
++            offset: Offset(0, 6),
++            spreadRadius: -10,
++          ),
++        ],
++      ),
++      child: Column(
++        children: [
++          Text('Sin eventos este día',
++              style: BovaraText.body(size: 13.5, color: BovaraColors.textMuted)
++                  .copyWith(fontWeight: FontWeight.w700)),
++          const SizedBox(height: 4),
++          Text('Toca + para programar una tarea',
++              style: BovaraText.label(size: 12, color: BovaraColors.textDisabled)),
++        ],
++      ),
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// FAB + SHEET DE REGISTRO RÁPIDO
++// ═════════════════════════════════════════════════════════════════
++
++class _QuickAddFab extends StatelessWidget {
++  final VoidCallback onTap;
++  const _QuickAddFab({required this.onTap});
++
++  @override
++  Widget build(BuildContext context) {
++    return Material(
++      color: Colors.transparent,
++      child: InkWell(
++        onTap: onTap,
++        customBorder: const CircleBorder(),
++        child: Container(
++          width: 56,
++          height: 56,
++          decoration: BoxDecoration(
++            gradient: const LinearGradient(
++              begin: Alignment(-0.3, -1),
++              end: Alignment(0.5, 1),
++              colors: [Color(0xFF3DA35D), BovaraColors.primary],
++            ),
++            shape: BoxShape.circle,
++            boxShadow: [
++              BoxShadow(
++                color: BovaraColors.primary.withValues(alpha: 0.75),
++                blurRadius: 30,
++                offset: const Offset(0, 14),
++                spreadRadius: -10,
++              ),
++            ],
++          ),
++          child: const Icon(Icons.add, color: Colors.white, size: 26),
++        ),
++      ),
++    );
++  }
++}
++
++class _QuickAddSheet extends StatelessWidget {
++  final VoidCallback onNewCattle;
++  final VoidCallback onNewReminder;
++
++  const _QuickAddSheet({
++    required this.onNewCattle,
++    required this.onNewReminder,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      margin: const EdgeInsets.symmetric(horizontal: 12),
++      decoration: const BoxDecoration(
++        color: Colors.white,
++        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
++      ),
++      child: SafeArea(
++        top: false,
++        child: Padding(
++          padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              Center(
++                child: Container(
++                  width: 44,
++                  height: 5,
++                  decoration: BoxDecoration(
++                    color: BovaraColors.border,
++                    borderRadius: BorderRadius.circular(3),
++                  ),
++                ),
++              ),
++              const SizedBox(height: 14),
++              Align(
++                alignment: Alignment.centerLeft,
++                child: Text('Registro rápido',
++                    style: BovaraText.heading()
++                        .copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
++              ),
++              const SizedBox(height: 12),
++              _QuickOption(
++                icon: Icons.event_available,
++                title: 'Nueva tarea',
++                subtitle: 'Programa una tarea (vacuna, chequeo, celo)',
++                bg: const Color(0xFFF4F8F4),
++                border: const Color(0xFFE4EFE6),
++                iconBg: const Color(0xFFE7F2E9),
++                iconColor: BovaraColors.primary,
++                onTap: onNewReminder,
++              ),
++              const SizedBox(height: 8),
++              _QuickOption(
++                icon: Icons.pets,
++                title: 'Nueva vaca',
++                subtitle: 'Alta con foto en 2 minutos',
++                bg: const Color(0xFFF4F8F4),
++                border: const Color(0xFFE4EFE6),
++                iconBg: const Color(0xFFE7F2E9),
++                iconColor: BovaraColors.primary,
++                onTap: onNewCattle,
++              ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++class _QuickOption extends StatelessWidget {
++  final IconData icon;
++  final String title;
++  final String subtitle;
++  final Color bg;
++  final Color border;
++  final Color iconBg;
++  final Color iconColor;
++  final VoidCallback onTap;
++
++  const _QuickOption({
++    required this.icon,
++    required this.title,
++    required this.subtitle,
++    required this.bg,
++    required this.border,
++    required this.iconBg,
++    required this.iconColor,
++    required this.onTap,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Material(
++      color: Colors.transparent,
++      child: InkWell(
++        onTap: onTap,
++        borderRadius: BorderRadius.circular(14),
++        child: Container(
++          padding: const EdgeInsets.all(12),
++          decoration: BoxDecoration(
++            color: bg,
++            border: Border.all(color: border),
++            borderRadius: BorderRadius.circular(14),
++          ),
++          child: Row(
++            children: [
++              Container(
++                width: 36,
++                height: 36,
++                decoration: BoxDecoration(
++                  color: iconBg,
++                  borderRadius: BorderRadius.circular(11),
++                ),
++                child: Icon(icon, size: 18, color: iconColor),
++              ),
++              const SizedBox(width: 12),
++              Expanded(
++                child: Column(
++                  crossAxisAlignment: CrossAxisAlignment.start,
++                  children: [
++                    Text(title,
++                        style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
++                            .copyWith(fontWeight: FontWeight.w700)),
++                    const SizedBox(height: 1),
++                    Text(subtitle,
++                        style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted)),
++                  ],
++                ),
++              ),
++              const Icon(Icons.chevron_right,
++                  size: 16, color: BovaraColors.textDisabled),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
+diff --git a/lib/features/notifications/presentation/pages/reminders_page.dart b/lib/features/notifications/presentation/pages/reminders_page.dart
+index 313685c..650fed9 100644
+--- a/lib/features/notifications/presentation/pages/reminders_page.dart
++++ b/lib/features/notifications/presentation/pages/reminders_page.dart
+@@ -1,50 +1,162 @@
+ // lib/features/notifications/presentation/pages/reminders_page.dart
++//
++// Tareas (Grupo F · Tareas del rediseño).
++//
++// Estructura:
++//   - Header: título "Tareas" + resumen dinámico + botón + con gradient.
++//   - Segmented control: Hoy · Próximas · Vencidas (con contadores reales).
++//   - Lista scrolleable de cards con:
++//       - Checkbox circular (marca completado en el backend).
++//       - Título del recordatorio.
++//       - Meta: fecha relativa + tipo + vaca (si aplica).
++//       - Tag de color según tipo (Vacuna azul, Celo rosa, Pesaje verde…).
++//   - Banner rojo motivacional cuando hay tareas vencidas.
++//
++// LÓGICA CONECTADA REAL: usa ReminderService para leer / marcar como
++// completado. Al abrir la pantalla se cargan TODOS los recordatorios y
++// se dividen por tab en cliente.
++
+ import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
+ import 'package:go_router/go_router.dart';
+ 
++import '../../../../core/theme/theme.dart';
++import '../../data/models/reminder_model.dart';
++import '../../data/services/reminder_service.dart';
++
+ class RemindersPage extends StatefulWidget {
+-  const RemindersPage({Key? key}) : super(key: key);
++  const RemindersPage({super.key});
+ 
+   @override
+   State<RemindersPage> createState() => _RemindersPageState();
+ }
+ 
++enum _Tab { hoy, proximas, vencidas }
++
+ class _RemindersPageState extends State<RemindersPage> {
+-  String currentMonth = 'Octubre 2024';
+-
+-  // Eventos por día
+-  final Map<int, List<EventType>> dayEvents = {
+-    1: [EventType.vacuna, EventType.celo],
+-    3: [EventType.desparasitacion],
+-    5: [EventType.parto, EventType.vacuna],
+-    10: [EventType.desparasitacion, EventType.palpacion, EventType.celo],
+-    15: [EventType.palpacion, EventType.parto],
+-    18: [EventType.destete],
+-    22: [EventType.parto, EventType.vacuna],
+-    25: [EventType.destete],
+-    28: [EventType.vacuna],
+-    30: [EventType.palpacion, EventType.vacuna],
+-  };
++  final _service = ReminderService();
++
++  _Tab _current = _Tab.hoy;
++  List<ReminderModel> _all = [];
++  bool _loading = true;
++  String? _error;
++
++  @override
++  void initState() {
++    super.initState();
++    _load();
++  }
++
++  Future<void> _load() async {
++    setState(() {
++      _loading = true;
++      _error = null;
++    });
++    try {
++      final list = await _service.listReminders(limit: 100);
++      if (!mounted) return;
++      setState(() {
++        _all = list;
++        _loading = false;
++      });
++    } catch (e) {
++      if (!mounted) return;
++      setState(() {
++        _error = e.toString().replaceAll('Exception: ', '');
++        _loading = false;
++      });
++    }
++  }
++
++  Future<void> _toggleComplete(ReminderModel r) async {
++    if (r.isCompleted) return; // No permitimos "descompletar" desde aquí
++    HapticFeedback.lightImpact();
++
++    // Optimistic update
++    final idx = _all.indexWhere((x) => x.id == r.id);
++    if (idx == -1) return;
++    setState(() {
++      _all[idx] = r.copyWith(
++        status: ReminderStatus.completed,
++        completedAt: DateTime.now(),
++      );
++    });
++
++    try {
++      final updated = await _service.completeReminder(r.id);
++      if (!mounted) return;
++      setState(() => _all[idx] = updated);
++    } catch (e) {
++      if (!mounted) return;
++      // Revertir
++      setState(() => _all[idx] = r);
++      ScaffoldMessenger.of(context).showSnackBar(
++        SnackBar(
++          content: Text('No se pudo completar: ${e.toString().replaceAll('Exception: ', '')}'),
++          backgroundColor: BovaraColors.danger,
++        ),
++      );
++    }
++  }
++
++  List<ReminderModel> get _hoy => _all
++      .where((r) => r.isToday && !r.isCompleted)
++      .toList()
++    ..sort((a, b) => a.reminderDate.compareTo(b.reminderDate));
++
++  List<ReminderModel> get _proximas {
++    final now = DateTime.now();
++    final today = DateTime(now.year, now.month, now.day);
++    return _all
++        .where((r) => r.isPending && r.reminderDate.isAfter(today) && !r.isToday)
++        .toList()
++      ..sort((a, b) => a.reminderDate.compareTo(b.reminderDate));
++  }
++
++  List<ReminderModel> get _vencidas => _all
++      .where((r) => r.isOverdue)
++      .toList()
++    ..sort((a, b) => b.reminderDate.compareTo(a.reminderDate));
++
++  List<ReminderModel> get _visible {
++    switch (_current) {
++      case _Tab.hoy:
++        return _hoy;
++      case _Tab.proximas:
++        return _proximas;
++      case _Tab.vencidas:
++        return _vencidas;
++    }
++  }
++
++  String get _summary {
++    final done = _hoy.where((r) => r.isCompleted).length;
++    final total = _hoy.length + done;
++    if (total == 0) return 'Sin tareas hoy';
++    return '$done de $total completadas hoy · ${_hoy.length} pendientes';
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      backgroundColor: Colors.white,
++      backgroundColor: BovaraColors.surfaceAlt,
+       body: SafeArea(
+         child: Column(
+           children: [
+-            _buildHeader(),
++            _Header(
++              summary: _summary,
++              onBack: () => context.go('/home'),
++              onAdd: _showNewReminderSheet,
++            ),
++            _Segmented(
++              current: _current,
++              hoyCount: _hoy.length,
++              proxCount: _proximas.length,
++              vencCount: _vencidas.length,
++              onSelect: (t) => setState(() => _current = t),
++            ),
+             Expanded(
+-              child: SingleChildScrollView(
+-                child: Column(
+-                  children: [
+-                    _buildMonthNavigation(),
+-                    _buildLegend(),
+-                    _buildCalendar(),
+-                    _buildPendingSection(),
+-                  ],
+-                ),
+-              ),
++              child: _buildBody(),
+             ),
+           ],
+         ),
+@@ -52,439 +164,744 @@ class _RemindersPageState extends State<RemindersPage> {
+     );
+   }
+ 
+-  Widget _buildHeader() {
+-    return Container(
+-      height: 65,
+-      color: const Color(0xFF388E3C),
+-      padding: const EdgeInsets.symmetric(horizontal: 16),
+-      child: Row(
+-        children: [
+-          IconButton(
+-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+-            onPressed: () => context.pop(),
+-          ),
+-          const SizedBox(width: 12),
+-          const Text(
+-            'Calendario Ganadero',
+-            style: TextStyle(
+-              color: Colors.white,
+-              fontSize: 18,
+-              fontWeight: FontWeight.w600,
+-            ),
++  Widget _buildBody() {
++    if (_loading) {
++      return const Center(
++        child: CircularProgressIndicator(color: BovaraColors.primary),
++      );
++    }
++    if (_error != null) {
++      return Center(
++        child: Padding(
++          padding: const EdgeInsets.all(30),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              const Icon(Icons.cloud_off_outlined,
++                  size: 42, color: BovaraColors.textMuted),
++              const SizedBox(height: 12),
++              Text(_error!,
++                  textAlign: TextAlign.center,
++                  style: BovaraText.body(size: 14, color: BovaraColors.textSecondary)),
++              const SizedBox(height: 14),
++              TextButton(
++                onPressed: _load,
++                child: Text('Reintentar',
++                    style: BovaraText.label(size: 13, color: BovaraColors.primary)),
++              ),
++            ],
+           ),
+-        ],
++        ),
++      );
++    }
++
++    final items = _visible;
++    if (items.isEmpty) return _EmptyState(tab: _current);
++
++    return RefreshIndicator(
++      color: BovaraColors.primary,
++      onRefresh: _load,
++      child: ListView.separated(
++        padding: const EdgeInsets.fromLTRB(22, 14, 22, 30),
++        itemCount:
++            items.length + (_current == _Tab.vencidas && items.isNotEmpty ? 1 : 0),
++        separatorBuilder: (_, __) => const SizedBox(height: 11),
++        itemBuilder: (context, i) {
++          if (i == items.length) return const _VencidasBanner();
++          return _TaskCard(
++            reminder: items[i],
++            onToggleCheck: () => _toggleComplete(items[i]),
++          );
++        },
+       ),
+     );
+   }
+ 
+-  Widget _buildMonthNavigation() {
+-    return Container(
+-      padding: const EdgeInsets.all(16),
++  Future<void> _showNewReminderSheet() async {
++    HapticFeedback.selectionClick();
++    final created = await showModalBottomSheet<ReminderModel>(
++      context: context,
++      isScrollControlled: true,
++      backgroundColor: Colors.transparent,
++      builder: (_) => _NewReminderSheet(service: _service),
++    );
++    if (created != null && mounted) {
++      setState(() => _all.add(created));
++    }
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _Header extends StatelessWidget {
++  final String summary;
++  final VoidCallback onBack;
++  final VoidCallback onAdd;
++
++  const _Header({
++    required this.summary,
++    required this.onBack,
++    required this.onAdd,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 10, 22, 4),
+       child: Row(
+-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+         children: [
+-          IconButton(
+-            icon: const Icon(Icons.chevron_left, color: Color(0xFF4B5563)),
+-            onPressed: () {},
++          Material(
++            color: Colors.white,
++            borderRadius: BorderRadius.circular(12),
++            child: InkWell(
++              onTap: onBack,
++              borderRadius: BorderRadius.circular(12),
++              child: Container(
++                width: 38,
++                height: 38,
++                decoration: BoxDecoration(
++                  border: Border.all(color: BovaraColors.border, width: 1.5),
++                  borderRadius: BorderRadius.circular(12),
++                ),
++                child: const Icon(Icons.arrow_back_ios_new,
++                    size: 14, color: BovaraColors.textPrimary),
++              ),
++            ),
+           ),
+-          Text(
+-            currentMonth,
+-            style: const TextStyle(
+-              fontSize: 18,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF111827),
++          const SizedBox(width: 14),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text('Tareas',
++                    style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
++                      fontSize: 23,
++                      fontWeight: FontWeight.w800,
++                      letterSpacing: -0.23,
++                    )),
++                const SizedBox(height: 2),
++                Text(summary,
++                    style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
++              ],
+             ),
+           ),
+-          IconButton(
+-            icon: const Icon(Icons.chevron_right, color: Color(0xFF4B5563)),
+-            onPressed: () {},
++          // Botón +
++          Material(
++            color: Colors.transparent,
++            child: InkWell(
++              onTap: onAdd,
++              borderRadius: BorderRadius.circular(13),
++              child: Container(
++                width: 42,
++                height: 42,
++                decoration: BoxDecoration(
++                  gradient: const LinearGradient(
++                    begin: Alignment(-0.3, -1),
++                    end: Alignment(0.5, 1),
++                    colors: [Color(0xFF3DA35D), BovaraColors.primary],
++                  ),
++                  borderRadius: BorderRadius.circular(13),
++                  boxShadow: [
++                    BoxShadow(
++                      color: BovaraColors.primary.withValues(alpha: 0.55),
++                      blurRadius: 18,
++                      offset: const Offset(0, 8),
++                      spreadRadius: -8,
++                    ),
++                  ],
++                ),
++                child: const Icon(Icons.add, color: Colors.white, size: 20),
++              ),
++            ),
+           ),
+         ],
+       ),
+     );
+   }
++}
+ 
+-  Widget _buildLegend() {
+-    return Container(
+-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+-      child: Column(
+-        children: [
+-          Row(
+-            mainAxisAlignment: MainAxisAlignment.spaceAround,
+-            children: [
+-              _buildLegendItem('Vacuna', const Color(0xFF10B981)),
+-              _buildLegendItem('Desparasitación', const Color(0xFFF59E0B)),
+-              _buildLegendItem('Celo', const Color(0xFFEF4444)),
+-            ],
+-          ),
+-          const SizedBox(height: 8),
+-          Row(
+-            mainAxisAlignment: MainAxisAlignment.spaceAround,
+-            children: [
+-              _buildLegendItem('Palpación', const Color(0xFF8B5CF6)),
+-              _buildLegendItem('Parto', const Color(0xFF06B6D4)),
+-              _buildLegendItem('Destete', const Color(0xFF84CC16)),
+-            ],
+-          ),
+-        ],
+-      ),
+-    );
+-  }
++// ═════════════════════════════════════════════════════════════════
++// SEGMENTED CONTROL
++// ═════════════════════════════════════════════════════════════════
+ 
+-  Widget _buildLegendItem(String label, Color color) {
+-    return Row(
+-      children: [
+-        Container(
+-          width: 8,
+-          height: 8,
+-          decoration: BoxDecoration(
+-            color: color,
+-            shape: BoxShape.circle,
+-          ),
++class _Segmented extends StatelessWidget {
++  final _Tab current;
++  final int hoyCount;
++  final int proxCount;
++  final int vencCount;
++  final ValueChanged<_Tab> onSelect;
++
++  const _Segmented({
++    required this.current,
++    required this.hoyCount,
++    required this.proxCount,
++    required this.vencCount,
++    required this.onSelect,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.fromLTRB(22, 14, 22, 4),
++      child: Container(
++        padding: const EdgeInsets.all(4),
++        decoration: BoxDecoration(
++          color: const Color(0xFFE6E6DE),
++          borderRadius: BorderRadius.circular(16),
+         ),
+-        const SizedBox(width: 4),
+-        Text(
+-          label,
+-          style: const TextStyle(
+-            fontSize: 12,
+-            color: Color(0xFF4B5563),
+-          ),
++        child: Row(
++          children: [
++            Expanded(child: _Seg(label: 'Hoy · $hoyCount', selected: current == _Tab.hoy, onTap: () => onSelect(_Tab.hoy))),
++            const SizedBox(width: 4),
++            Expanded(child: _Seg(label: 'Próximas · $proxCount', selected: current == _Tab.proximas, onTap: () => onSelect(_Tab.proximas))),
++            const SizedBox(width: 4),
++            Expanded(child: _Seg(label: 'Vencidas · $vencCount', selected: current == _Tab.vencidas, onTap: () => onSelect(_Tab.vencidas))),
++          ],
+         ),
+-      ],
+-    );
+-  }
+-
+-  Widget _buildCalendar() {
+-    return Container(
+-      padding: const EdgeInsets.symmetric(horizontal: 16),
+-      child: Column(
+-        children: [
+-          _buildWeekDays(),
+-          const SizedBox(height: 8),
+-          _buildCalendarGrid(),
+-        ],
+       ),
+     );
+   }
++}
++
++class _Seg extends StatelessWidget {
++  final String label;
++  final bool selected;
++  final VoidCallback onTap;
++
++  const _Seg({required this.label, required this.selected, required this.onTap});
+ 
+-  Widget _buildWeekDays() {
+-    const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+-    return Row(
+-      mainAxisAlignment: MainAxisAlignment.spaceAround,
+-      children: days
+-          .map((day) => SizedBox(
+-        width: 45,
+-        child: Center(
++  @override
++  Widget build(BuildContext context) {
++    return InkWell(
++      onTap: onTap,
++      borderRadius: BorderRadius.circular(13),
++      child: AnimatedContainer(
++        duration: const Duration(milliseconds: 220),
++        padding: const EdgeInsets.symmetric(vertical: 10),
++        decoration: BoxDecoration(
++          color: selected ? Colors.white : Colors.transparent,
++          borderRadius: BorderRadius.circular(13),
++          boxShadow: selected
++              ? const [
++                  BoxShadow(
++                    color: Color(0x22000000),
++                    blurRadius: 8,
++                    offset: Offset(0, 3),
++                    spreadRadius: -4,
++                  ),
++                ]
++              : null,
++        ),
++        alignment: Alignment.center,
++        child: FittedBox(
+           child: Text(
+-            day,
+-            style: const TextStyle(
+-              fontSize: 12,
+-              fontWeight: FontWeight.w500,
+-              color: Color(0xFF6B7280),
++            label,
++            style: BovaraText.label(
++              size: 13,
++              color: selected ? BovaraColors.textPrimary : BovaraColors.textMuted,
+             ),
+           ),
+         ),
+-      ))
+-          .toList(),
+-    );
+-  }
+-
+-  Widget _buildCalendarGrid() {
+-    final previousMonthDays = [29, 30];
+-    final currentMonthDays = List.generate(31, (index) => index + 1);
+-    final nextMonthDays = [1, 2];
+-
+-    final allDays = [...previousMonthDays, ...currentMonthDays, ...nextMonthDays];
+-
+-    return GridView.builder(
+-      shrinkWrap: true,
+-      physics: const NeverScrollableScrollPhysics(),
+-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+-        crossAxisCount: 7,
+-        mainAxisSpacing: 4,
+-        crossAxisSpacing: 4,
+-        childAspectRatio: 1,
+       ),
+-      itemCount: allDays.length,
+-      itemBuilder: (context, index) {
+-        final day = allDays[index];
+-        final isCurrentMonth = index >= 2 && index < 33;
+-        final isPreviousMonth = index < 2;
+-        final isToday = day == 10 && isCurrentMonth;
+-
+-        return _buildDayCell(
+-          day,
+-          isCurrentMonth: isCurrentMonth,
+-          isPreviousMonth: isPreviousMonth,
+-          isToday: isToday,
+-          events: isCurrentMonth ? dayEvents[day] : null,
+-        );
+-      },
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// TASK CARD
++// ═════════════════════════════════════════════════════════════════
++
++class _TaskCard extends StatelessWidget {
++  final ReminderModel reminder;
++  final VoidCallback onToggleCheck;
++
++  const _TaskCard({required this.reminder, required this.onToggleCheck});
++
++  @override
++  Widget build(BuildContext context) {
++    final tag = _tagFor(reminder.type);
++    final isDone = reminder.isCompleted;
+ 
+-  Widget _buildDayCell(
+-      int day, {
+-        required bool isCurrentMonth,
+-        required bool isPreviousMonth,
+-        required bool isToday,
+-        List<EventType>? events,
+-      }) {
+     return Container(
++      padding: const EdgeInsets.all(15),
+       decoration: BoxDecoration(
+-        color: isCurrentMonth
+-            ? (isToday ? const Color(0xFFDBEAFE) : Colors.white)
+-            : const Color(0xFFF3F4F6),
+-        borderRadius: BorderRadius.circular(4),
+-        border: isToday ? Border.all(color: const Color(0xFF3B82F6), width: 2) : null,
+-      ),
+-      child: Column(
+-        mainAxisAlignment: MainAxisAlignment.center,
+-        children: [
+-          Text(
+-            day.toString(),
+-            style: TextStyle(
+-              fontSize: 12,
+-              color: isCurrentMonth
+-                  ? (isToday ? const Color(0xFF1E40AF) : const Color(0xFF111827))
+-                  : const Color(0xFF9CA3AF),
+-            ),
++        color: Colors.white,
++        borderRadius: BorderRadius.circular(18),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x18000000),
++            blurRadius: 16,
++            offset: Offset(0, 6),
++            spreadRadius: -10,
+           ),
+-          if (events != null && events.isNotEmpty) ...[
+-            const SizedBox(height: 4),
+-            _buildEventIndicators(events),
+-          ],
+         ],
+       ),
+-    );
+-  }
+-
+-  Widget _buildEventIndicators(List<EventType> events) {
+-    final displayEvents = events.take(3).toList();
+-
+-    if (displayEvents.length == 1) {
+-      return Container(
+-        width: 4,
+-        height: 4,
+-        decoration: BoxDecoration(
+-          color: _getEventColor(displayEvents[0]),
+-          shape: BoxShape.circle,
+-        ),
+-      );
+-    } else if (displayEvents.length == 2) {
+-      return Row(
+-        mainAxisAlignment: MainAxisAlignment.center,
+-        children: [
+-          Container(
+-            width: 4,
+-            height: 4,
+-            decoration: BoxDecoration(
+-              color: _getEventColor(displayEvents[0]),
+-              shape: BoxShape.circle,
+-            ),
+-          ),
+-          const SizedBox(width: 2),
+-          Container(
+-            width: 4,
+-            height: 4,
+-            decoration: BoxDecoration(
+-              color: _getEventColor(displayEvents[1]),
+-              shape: BoxShape.circle,
+-            ),
+-          ),
+-        ],
+-      );
+-    } else {
+-      return Row(
+-        mainAxisAlignment: MainAxisAlignment.center,
++      child: Row(
+         children: [
+-          Container(
+-            width: 4,
+-            height: 4,
+-            decoration: BoxDecoration(
+-              color: _getEventColor(displayEvents[0]),
+-              shape: BoxShape.circle,
++          // Check
++          Material(
++            color: Colors.transparent,
++            child: InkWell(
++              onTap: onToggleCheck,
++              customBorder: const CircleBorder(),
++              child: AnimatedContainer(
++                duration: const Duration(milliseconds: 220),
++                width: 26,
++                height: 26,
++                decoration: BoxDecoration(
++                  color: isDone ? BovaraColors.primary : Colors.transparent,
++                  shape: BoxShape.circle,
++                  border: Border.all(
++                    color: isDone ? BovaraColors.primary : const Color(0xFFCED3CB),
++                    width: 2.5,
++                  ),
++                ),
++                child: isDone
++                    ? const Icon(Icons.check, size: 15, color: Colors.white)
++                    : null,
++              ),
+             ),
+           ),
+-          const SizedBox(width: 2),
+-          Container(
+-            width: 4,
+-            height: 4,
+-            decoration: BoxDecoration(
+-              color: _getEventColor(displayEvents[1]),
+-              shape: BoxShape.circle,
++          const SizedBox(width: 13),
++          Expanded(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Text(
++                  reminder.title,
++                  style: BovaraText.body(
++                    size: 14.5,
++                    color: isDone ? BovaraColors.textMuted : BovaraColors.textPrimary,
++                  ).copyWith(
++                    fontWeight: FontWeight.w700,
++                    decoration: isDone ? TextDecoration.lineThrough : null,
++                  ),
++                ),
++                const SizedBox(height: 2),
++                Text(
++                  _metaFor(reminder),
++                  style: BovaraText.label(size: 12, color: BovaraColors.textMuted),
++                ),
++              ],
+             ),
+           ),
+-          const SizedBox(width: 2),
++          const SizedBox(width: 8),
+           Container(
+-            width: 4,
+-            height: 4,
+-            decoration: BoxDecoration(
+-              color: _getEventColor(displayEvents[2]),
+-              shape: BoxShape.circle,
++            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
++            decoration: BoxDecoration(color: tag.bg, borderRadius: BorderRadius.circular(12)),
++            child: Text(
++              tag.label,
++              style: BovaraText.label(size: 10.5, color: tag.fg).copyWith(letterSpacing: 0.2),
+             ),
+           ),
+         ],
+-      );
++      ),
++    );
++  }
++
++  String _metaFor(ReminderModel r) {
++    final parts = <String>[_dateLabel(r.reminderDate)];
++    if (r.description != null && r.description!.isNotEmpty) {
++      parts.add(r.description!);
+     }
++    return parts.join(' · ');
+   }
+ 
+-  Color _getEventColor(EventType type) {
+-    switch (type) {
+-      case EventType.vacuna:
+-        return const Color(0xFF10B981);
+-      case EventType.desparasitacion:
+-        return const Color(0xFFF59E0B);
+-      case EventType.celo:
+-        return const Color(0xFFEF4444);
+-      case EventType.palpacion:
+-        return const Color(0xFF8B5CF6);
+-      case EventType.parto:
+-        return const Color(0xFF06B6D4);
+-      case EventType.destete:
+-        return const Color(0xFF84CC16);
++  static _TagStyle _tagFor(ReminderType t) {
++    switch (t) {
++      case ReminderType.vaccine:
++        return _TagStyle('Vacuna', BovaraColors.infoSoftBg, BovaraColors.info);
++      case ReminderType.checkup:
++        return _TagStyle('Chequeo', BovaraColors.primarySoftBg, BovaraColors.primarySoftText);
++      case ReminderType.treatment:
++        return _TagStyle('Tratamiento', BovaraColors.warningSoftBg, const Color(0xFFA86A1E));
++      case ReminderType.feeding:
++        return _TagStyle('Alimento', BovaraColors.surfaceAlt, BovaraColors.textSecondary);
++      case ReminderType.breeding:
++        return _TagStyle('Celo', BovaraColors.celoSoftBg, BovaraColors.celoSoftText);
++      case ReminderType.other:
++        return _TagStyle('Otro', BovaraColors.surfaceAlt, BovaraColors.textSecondary);
+     }
+   }
+ 
+-  Widget _buildPendingSection() {
+-    return Container(
+-      padding: const EdgeInsets.all(16),
+-      child: Column(
+-        crossAxisAlignment: CrossAxisAlignment.start,
+-        children: [
+-          const Text(
+-            'Pendientes Hoy',
+-            style: TextStyle(
+-              fontSize: 18,
+-              fontWeight: FontWeight.w600,
+-              color: Color(0xFF111827),
+-            ),
+-          ),
+-          const SizedBox(height: 16),
+-          _buildPendingItem(
+-            'Vacunación',
+-            'Lote A',
+-            '2 animales - 16:00 hrs',
+-            const Color(0xFF10B981),
+-            Icons.vaccines,
+-          ),
+-          const SizedBox(height: 12),
+-          _buildPendingItem(
+-            'Registrar parto',
+-            'Lote A',
+-            '2 animales',
+-            const Color(0xFF10B981),
+-            Icons.child_care,
+-          ),
+-          const SizedBox(height: 12),
+-          _buildPendingItem(
+-            'Registrar celo',
+-            'Lote A - 003',
+-            'Rutila',
+-            const Color(0xFF10B981),
+-            Icons.favorite,
+-          ),
+-        ],
+-      ),
+-    );
++  static String _dateLabel(DateTime d) {
++    final now = DateTime.now();
++    final today = DateTime(now.year, now.month, now.day);
++    final target = DateTime(d.year, d.month, d.day);
++    final diff = target.difference(today).inDays;
++
++    if (diff == 0) return 'Hoy';
++    if (diff == 1) return 'Mañana';
++    if (diff == -1) return 'Ayer';
++    if (diff > 1 && diff < 7) return 'En $diff días';
++    if (diff < -1 && diff > -7) return 'Hace ${-diff} días';
++
++    const months = [
++      'ene', 'feb', 'mar', 'abr', 'may', 'jun',
++      'jul', 'ago', 'sep', 'oct', 'nov', 'dic',
++    ];
++    return '${d.day} ${months[d.month - 1]}';
+   }
++}
++
++class _TagStyle {
++  final String label;
++  final Color bg;
++  final Color fg;
++  const _TagStyle(this.label, this.bg, this.fg);
++}
++
++// ═════════════════════════════════════════════════════════════════
++// BANNER DE VENCIDAS
++// ═════════════════════════════════════════════════════════════════
+ 
+-  Widget _buildPendingItem(
+-      String title,
+-      String lote,
+-      String details,
+-      Color iconColor,
+-      IconData icon,
+-      ) {
++class _VencidasBanner extends StatelessWidget {
++  const _VencidasBanner();
++
++  @override
++  Widget build(BuildContext context) {
+     return Container(
+-      padding: const EdgeInsets.all(12),
++      padding: const EdgeInsets.all(15),
+       decoration: BoxDecoration(
+-        color: Colors.white,
+-        borderRadius: BorderRadius.circular(8),
+-        border: Border.all(color: const Color(0xFFE5E7EB)),
+-        boxShadow: [
+-          BoxShadow(
+-            color: Colors.black.withOpacity(0.05),
+-            blurRadius: 2,
+-            offset: const Offset(0, 1),
+-          ),
+-        ],
++        color: const Color(0xFFFBEBEA),
++        border: Border.all(color: const Color(0xFFF2CFCB)),
++        borderRadius: BorderRadius.circular(16),
+       ),
+       child: Row(
+         children: [
+           Container(
+-            width: 32,
+-            height: 32,
+-            decoration: BoxDecoration(
+-              color: iconColor,
++            width: 30,
++            height: 30,
++            decoration: const BoxDecoration(
++              color: Color(0xFFF5D7D3),
+               shape: BoxShape.circle,
+             ),
+-            child: const Icon(
+-              Icons.edit,
+-              color: Colors.white,
+-              size: 16,
++            child: Center(
++              child: Text('!',
++                  style: BovaraText.title(color: const Color(0xFFB03A31)).copyWith(fontSize: 15)),
+             ),
+           ),
+-          const SizedBox(width: 12),
++          const SizedBox(width: 11),
+           Expanded(
++            child: Text(
++              'Las tareas vencidas afectan la salud del hato. Reprográmalas o márcalas como hechas.',
++              style: BovaraText.body(size: 12.5, color: const Color(0xFF9C3A31))
++                  .copyWith(fontWeight: FontWeight.w600, height: 1.4),
++            ),
++          ),
++        ],
++      ),
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// EMPTY STATE
++// ═════════════════════════════════════════════════════════════════
++
++class _EmptyState extends StatelessWidget {
++  final _Tab tab;
++  const _EmptyState({required this.tab});
++
++  @override
++  Widget build(BuildContext context) {
++    final (title, subtitle) = switch (tab) {
++      _Tab.hoy => (
++        'Sin tareas hoy',
++        'Aprovecha para planear pesajes o vacunaciones futuras.',
++      ),
++      _Tab.proximas => (
++        'No hay próximas tareas',
++        'Toca el + para programar la siguiente ronda de vacunas o revisiones.',
++      ),
++      _Tab.vencidas => (
++        'Todo al día ✓',
++        'No tienes tareas vencidas.',
++      ),
++    };
++    return Center(
++      child: Padding(
++        padding: const EdgeInsets.all(30),
++        child: Column(
++          mainAxisSize: MainAxisSize.min,
++          children: [
++            Icon(
++              tab == _Tab.vencidas
++                  ? Icons.check_circle_outline
++                  : Icons.event_available_outlined,
++              size: 42,
++              color: BovaraColors.textMuted,
++            ),
++            const SizedBox(height: 12),
++            Text(title,
++                textAlign: TextAlign.center,
++                style: BovaraText.heading()
++                    .copyWith(fontSize: 16, fontWeight: FontWeight.w800)),
++            const SizedBox(height: 6),
++            Text(subtitle,
++                textAlign: TextAlign.center,
++                style: BovaraText.body(size: 13, color: BovaraColors.textMuted)),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// NEW REMINDER SHEET
++// ═════════════════════════════════════════════════════════════════
++
++class _NewReminderSheet extends StatefulWidget {
++  final ReminderService service;
++  const _NewReminderSheet({required this.service});
++
++  @override
++  State<_NewReminderSheet> createState() => _NewReminderSheetState();
++}
++
++class _NewReminderSheetState extends State<_NewReminderSheet> {
++  final _titleCtrl = TextEditingController();
++  final _descCtrl = TextEditingController();
++  ReminderType _type = ReminderType.checkup;
++  DateTime _date = DateTime.now();
++  bool _saving = false;
++
++  @override
++  void dispose() {
++    _titleCtrl.dispose();
++    _descCtrl.dispose();
++    super.dispose();
++  }
++
++  Future<void> _pickDate() async {
++    final d = await showDatePicker(
++      context: context,
++      initialDate: _date,
++      firstDate: DateTime.now().subtract(const Duration(days: 30)),
++      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
++    );
++    if (d != null) setState(() => _date = d);
++  }
++
++  Future<void> _save() async {
++    final title = _titleCtrl.text.trim();
++    if (title.isEmpty) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(content: Text('Escribe un título para la tarea')),
++      );
++      return;
++    }
++    setState(() => _saving = true);
++    try {
++      final created = await widget.service.createReminder(
++        title: title,
++        reminderDate: _date,
++        type: _type,
++        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
++      );
++      if (!mounted) return;
++      Navigator.pop(context, created);
++    } catch (e) {
++      if (!mounted) return;
++      ScaffoldMessenger.of(context).showSnackBar(
++        SnackBar(
++          content: Text(e.toString().replaceAll('Exception: ', '')),
++          backgroundColor: BovaraColors.danger,
++        ),
++      );
++      setState(() => _saving = false);
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
++    return Padding(
++      padding: EdgeInsets.only(bottom: bottomInset),
++      child: Container(
++        margin: const EdgeInsets.symmetric(horizontal: 12),
++        decoration: const BoxDecoration(
++          color: Colors.white,
++          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
++        ),
++        child: SafeArea(
++          top: false,
++          child: SingleChildScrollView(
++            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+             child: Column(
+-              crossAxisAlignment: CrossAxisAlignment.start,
++              mainAxisSize: MainAxisSize.min,
++              crossAxisAlignment: CrossAxisAlignment.stretch,
+               children: [
+-                Text(
+-                  title,
+-                  style: const TextStyle(
+-                    fontSize: 14,
+-                    fontWeight: FontWeight.w500,
+-                    color: Color(0xFF111827),
++                Center(
++                  child: Container(
++                    width: 44,
++                    height: 5,
++                    decoration: BoxDecoration(
++                      color: BovaraColors.border,
++                      borderRadius: BorderRadius.circular(3),
++                    ),
+                   ),
+                 ),
+-                const SizedBox(height: 4),
+-                Row(
+-                  children: [
+-                    Container(
+-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+-                      decoration: BoxDecoration(
+-                        color: const Color(0xFFDBEAFE),
+-                        borderRadius: BorderRadius.circular(9999),
+-                      ),
+-                      child: Text(
+-                        lote,
+-                        style: const TextStyle(
+-                          fontSize: 12,
+-                          fontWeight: FontWeight.w500,
+-                          color: Color(0xFF1E40AF),
++                const SizedBox(height: 14),
++                Text('Nueva tarea',
++                    style: BovaraText.heading()
++                        .copyWith(fontSize: 17, fontWeight: FontWeight.w800)),
++                const SizedBox(height: 14),
++                _Label('Título'),
++                TextField(
++                  controller: _titleCtrl,
++                  autofocus: true,
++                  style: BovaraText.body(size: 14),
++                  cursorColor: BovaraColors.primary,
++                  decoration: _inputDeco(hint: 'Ej. Vacunar Lote C'),
++                ),
++                const SizedBox(height: 12),
++                _Label('Tipo'),
++                Wrap(
++                  spacing: 7,
++                  runSpacing: 7,
++                  children: ReminderType.values.map((t) {
++                    final sel = t == _type;
++                    return InkWell(
++                      onTap: () => setState(() => _type = t),
++                      borderRadius: BorderRadius.circular(20),
++                      child: Container(
++                        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
++                        decoration: BoxDecoration(
++                          color: sel ? BovaraColors.darkBar : BovaraColors.surfaceAlt,
++                          borderRadius: BorderRadius.circular(20),
++                        ),
++                        child: Text(
++                          t.display,
++                          style: BovaraText.label(
++                            size: 12,
++                            color: sel ? Colors.white : BovaraColors.textPrimary,
++                          ),
+                         ),
+                       ),
++                    );
++                  }).toList(),
++                ),
++                const SizedBox(height: 12),
++                _Label('Fecha'),
++                InkWell(
++                  onTap: _pickDate,
++                  borderRadius: BorderRadius.circular(12),
++                  child: Container(
++                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
++                    decoration: BoxDecoration(
++                      color: BovaraColors.surfaceAlt,
++                      borderRadius: BorderRadius.circular(12),
+                     ),
+-                    const SizedBox(width: 8),
+-                    Text(
+-                      details,
+-                      style: const TextStyle(
+-                        fontSize: 12,
+-                        color: Color(0xFF6B7280),
++                    child: Row(
++                      children: [
++                        const Icon(Icons.calendar_today,
++                            size: 15, color: BovaraColors.textMuted),
++                        const SizedBox(width: 10),
++                        Text(_formatFullDate(_date),
++                            style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)),
++                      ],
++                    ),
++                  ),
++                ),
++                const SizedBox(height: 12),
++                _Label('Notas (opcional)'),
++                TextField(
++                  controller: _descCtrl,
++                  maxLines: 3,
++                  minLines: 2,
++                  style: BovaraText.body(size: 14),
++                  cursorColor: BovaraColors.primary,
++                  decoration: _inputDeco(hint: 'Ej. Aplicar por la mañana, verificar refrigeración'),
++                ),
++                const SizedBox(height: 18),
++                Material(
++                  color: Colors.transparent,
++                  child: InkWell(
++                    onTap: _saving ? null : _save,
++                    borderRadius: BorderRadius.circular(BovaraRadius.pill),
++                    child: Container(
++                      height: 50,
++                      alignment: Alignment.center,
++                      decoration: BoxDecoration(
++                        gradient: const LinearGradient(
++                          begin: Alignment(-0.3, -1),
++                          end: Alignment(0.5, 1),
++                          colors: [Color(0xFF3DA35D), BovaraColors.primary],
++                        ),
++                        borderRadius: BorderRadius.circular(BovaraRadius.pill),
++                        boxShadow: [
++                          BoxShadow(
++                            color: BovaraColors.primary.withValues(alpha: 0.55),
++                            blurRadius: 18,
++                            offset: const Offset(0, 8),
++                            spreadRadius: -8,
++                          ),
++                        ],
+                       ),
++                      child: _saving
++                          ? const SizedBox(
++                              width: 22,
++                              height: 22,
++                              child: CircularProgressIndicator(
++                                strokeWidth: 2.4,
++                                color: Colors.white,
++                              ),
++                            )
++                          : Text('Guardar tarea',
++                              style: BovaraText.label(size: 14.5, color: Colors.white)),
+                     ),
+-                  ],
++                  ),
+                 ),
+               ],
+             ),
+           ),
+-          const Icon(
+-            Icons.chevron_right,
+-            color: Color(0xFF9CA3AF),
+-            size: 20,
+-          ),
+-        ],
++        ),
+       ),
+     );
+   }
++
++  InputDecoration _inputDeco({required String hint}) => InputDecoration(
++        hintText: hint,
++        hintStyle: BovaraText.body(size: 14, color: BovaraColors.textDisabled),
++        filled: true,
++        fillColor: BovaraColors.surfaceAlt,
++        border: OutlineInputBorder(
++          borderRadius: BorderRadius.circular(12),
++          borderSide: BorderSide.none,
++        ),
++        enabledBorder: OutlineInputBorder(
++          borderRadius: BorderRadius.circular(12),
++          borderSide: BorderSide.none,
++        ),
++        focusedBorder: OutlineInputBorder(
++          borderRadius: BorderRadius.circular(12),
++          borderSide: const BorderSide(color: BovaraColors.primary, width: 1.5),
++        ),
++      );
++
++  String _formatFullDate(DateTime d) {
++    const dias = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
++    const meses = [
++      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
++      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
++    ];
++    return '${dias[d.weekday - 1]} ${d.day} ${meses[d.month - 1]} ${d.year}';
++  }
+ }
+ 
+-enum EventType {
+-  vacuna,
+-  desparasitacion,
+-  celo,
+-  palpacion,
+-  parto,
+-  destete,
++class _Label extends StatelessWidget {
++  final String text;
++  const _Label(this.text);
++  @override
++  Widget build(BuildContext context) {
++    return Padding(
++      padding: const EdgeInsets.only(bottom: 7),
++      child: Text(text,
++          style: BovaraText.label(size: 12.5, color: BovaraColors.textSecondary)),
++    );
++  }
+ }

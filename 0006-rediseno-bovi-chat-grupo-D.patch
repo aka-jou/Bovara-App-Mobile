@@ -1,0 +1,1822 @@
+diff --git a/lib/features/assistant/presentation/pages/assistant_chat_page.dart b/lib/features/assistant/presentation/pages/assistant_chat_page.dart
+index 05a5471..3a5ced2 100644
+--- a/lib/features/assistant/presentation/pages/assistant_chat_page.dart
++++ b/lib/features/assistant/presentation/pages/assistant_chat_page.dart
+@@ -1,8 +1,31 @@
++// lib/features/assistant/presentation/pages/assistant_chat_page.dart
++//
++// Chat con Bovi (Grupo D del rediseño).
++//
++// Estructura:
++//   - Header verde con gradient: botón atrás + avatar Bovi + nombre + chip IA
++//     + puntito de "en línea" + botón "cambiar idioma" (placeholder).
++//   - Sección plegable "Recomendaciones de uso" con 4 cards horizontales
++//     (Habla o escribe, Consulta al instante, Sin conexión, Atajos rápidos).
++//   - Timeline del chat con mensajes:
++//       - Usuario: burbuja verde con gradient a la derecha.
++//       - Bot: burbuja blanca a la izquierda con avatar de Bovi que
++//         PARPADEA y HABLA mientras responde (animación real).
++//   - Barra de chips sugeridos ("¿Alguna vaca en celo?" etc).
++//   - Input con micrófono y botón enviar.
++//
++// LÓGICA CONECTADA REAL:
++//   - Llama a AssistantService.sendMessage() con el mensaje del usuario.
++//   - Micrófono usa el paquete speech_to_text ya en el pubspec.
++//   - Los prompts sugeridos rellenan y envían automáticamente.
++
+ import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
+ import 'package:go_router/go_router.dart';
+ import 'package:speech_to_text/speech_to_text.dart' as stt;
+-import 'package:permission_handler/permission_handler.dart';
+-import '../../data/services/assistant_service.dart'; // ✅ AGREGAR
++
++import '../../../../core/theme/theme.dart';
++import '../../data/services/assistant_service.dart';
+ 
+ class AssistantChatPage extends StatefulWidget {
+   const AssistantChatPage({super.key});
+@@ -11,811 +34,1120 @@ class AssistantChatPage extends StatefulWidget {
+   State<AssistantChatPage> createState() => _AssistantChatPageState();
+ }
+ 
+-class _AssistantChatPageState extends State<AssistantChatPage>
+-    with TickerProviderStateMixin {
+-  final List<ChatMessage> _messages = [];
+-  final TextEditingController _inputController = TextEditingController();
+-  final ScrollController _scrollController = ScrollController();
+-
+-  bool _sending = false;
+-  bool _assistantTyping = false;
+-
+-  // Voz
+-  late stt.SpeechToText _speechToText;
+-  bool _isListening = false;
+-  bool _speechEnabled = false;
+-  String _lastWords = '';
++class _AssistantChatPageState extends State<AssistantChatPage> {
++  final _service = AssistantService();
++  final _inputCtrl = TextEditingController();
++  final _scrollCtrl = ScrollController();
++  final _speech = stt.SpeechToText();
+ 
+-  // ✅ AGREGAR: Servicio del asistente
+-  final _assistantService = AssistantService();
++  final List<_ChatMessage> _messages = [];
++  bool _isTyping = false;
++  bool _showTips = false;
++  bool _isRecording = false;
++  bool _speechReady = false;
+ 
+-  // Animaciones
+-  late AnimationController _pulseController;
+-  late Animation<double> _pulseAnimation;
+-
+-  late AnimationController _thinkingController;
+-  late Animation<double> _thinkingAnimation;
++  static const _suggestedChips = <String>[
++    '¿Alguna vaca en celo?',
++    '¿Qué vacunas toca hoy?',
++    '¿Cuántas cabezas tengo?',
++    'Tareas pendientes',
++    'Ver últimos partos',
++  ];
+ 
+   @override
+   void initState() {
+     super.initState();
++    _messages.add(_ChatMessage.bot(
++      text: '¡Hola! Soy Bovi. Puedes preguntarme por celos, vacunas, pesos o tareas del día. ¿En qué te ayudo?',
++    ));
+     _initSpeech();
+-    _initAnimations();
+-    _addWelcomeMessage();
+-    _checkConnection(); // ✅ AGREGAR
+   }
+ 
+-  void _initAnimations() {
+-    _pulseController = AnimationController(
+-      duration: const Duration(milliseconds: 1000),
+-      vsync: this,
+-    )..repeat(reverse: true);
+-
+-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
+-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
++  Future<void> _initSpeech() async {
++    _speechReady = await _speech.initialize(
++      onStatus: (status) {
++        if (status == 'done' || status == 'notListening') {
++          if (mounted) setState(() => _isRecording = false);
++        }
++      },
++      onError: (err) {
++        if (mounted) setState(() => _isRecording = false);
++      },
+     );
++  }
+ 
+-    _thinkingController = AnimationController(
+-      duration: const Duration(milliseconds: 1500),
+-      vsync: this,
+-    )..repeat();
+-
+-    _thinkingAnimation = CurvedAnimation(
+-      parent: _thinkingController,
+-      curve: Curves.easeInOut,
+-    );
++  @override
++  void dispose() {
++    _inputCtrl.dispose();
++    _scrollCtrl.dispose();
++    _speech.stop();
++    super.dispose();
+   }
+ 
+-  // ✅ AGREGAR: Verificar conexión al iniciar
+-  Future<void> _checkConnection() async {
+-    final isConnected = await _assistantService.checkHealth();
++  Future<void> _sendMessage(String text) async {
++    final trimmed = text.trim();
++    if (trimmed.isEmpty) return;
++    HapticFeedback.selectionClick();
+ 
+-    if (!isConnected && mounted) {
+-      ScaffoldMessenger.of(context).showSnackBar(
+-        const SnackBar(
+-          content: Text('⚠️ No se pudo conectar con el asistente. Verifica que el servicio esté activo.'),
+-          backgroundColor: Colors.orange,
+-          duration: Duration(seconds: 5),
+-        ),
+-      );
+-    } else if (mounted) {
+-      print('✅ Conexión con el asistente establecida');
++    setState(() {
++      _messages.add(_ChatMessage.user(text: trimmed));
++      _isTyping = true;
++      _inputCtrl.clear();
++    });
++    _scrollToBottom();
++
++    try {
++      final resp = await _service.sendMessage(trimmed);
++      if (!mounted) return;
++      setState(() {
++        _isTyping = false;
++        _messages.add(_ChatMessage.bot(
++          text: resp.response.isEmpty ? '…' : resp.response,
++          toolUsed: resp.toolUsed,
++        ));
++      });
++      _scrollToBottom();
++    } catch (e) {
++      if (!mounted) return;
++      setState(() {
++        _isTyping = false;
++        _messages.add(_ChatMessage.bot(
++          text: 'No pude conectar con Bovi ahora mismo. Revisa tu conexión e inténtalo de nuevo.',
++          isError: true,
++        ));
++      });
++      _scrollToBottom();
+     }
+   }
+ 
+-  void _addWelcomeMessage() {
+-    final now = TimeOfDay.now();
+-    final ts = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+-
+-    _messages.add(
+-      ChatMessage(
+-        text: '¡Hola! Soy el Asistente Bovara 🐄\n\n'
+-            'Puedo ayudarte con:\n'
+-            '• Consultas sobre tu ganado 🐮\n'
+-            '• Recordatorios de vacunación 💉\n'
+-            '• Información de salud 🏥\n'
+-            '• Eventos de celo 💕\n\n'
+-            'Pregúntame lo que necesites, por ejemplo:\n'
+-            '• "¿Cuántas vacas tengo?"\n'
+-            '• "¿Cuándo le toca vacuna a la vaca 504?"\n'
+-            '• "Muéstrame mi ganado"\n\n'
+-            '¿En qué puedo ayudarte hoy?',
+-        isUser: false,
+-        timestamp: ts,
+-      ),
+-    );
++  void _scrollToBottom() {
++    WidgetsBinding.instance.addPostFrameCallback((_) {
++      if (_scrollCtrl.hasClients) {
++        _scrollCtrl.animateTo(
++          _scrollCtrl.position.maxScrollExtent,
++          duration: const Duration(milliseconds: 240),
++          curve: Curves.easeOut,
++        );
++      }
++    });
+   }
+ 
+-  Future<void> _initSpeech() async {
+-    _speechToText = stt.SpeechToText();
+-    _speechEnabled = await _speechToText.initialize(
+-      onError: (error) {
+-        debugPrint('Error en Speech-to-Text: $error');
+-        if (mounted) setState(() => _isListening = false);
+-      },
+-      onStatus: (status) {
+-        debugPrint('Estado de Speech: $status');
+-        if (status == 'done' || status == 'notListening') {
+-          if (mounted) setState(() => _isListening = false);
+-        }
++  Future<void> _startRecording() async {
++    if (!_speechReady) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(content: Text('Micrófono no disponible en este dispositivo')),
++      );
++      return;
++    }
++    HapticFeedback.mediumImpact();
++    setState(() => _isRecording = true);
++    _speech.listen(
++      localeId: 'es_MX',
++      onResult: (result) {
++        setState(() => _inputCtrl.text = result.recognizedWords);
+       },
+     );
+-    if (mounted) setState(() {});
+   }
+ 
+-  @override
+-  void dispose() {
+-    _inputController.dispose();
+-    _scrollController.dispose();
+-    _speechToText.stop();
+-    _pulseController.dispose();
+-    _thinkingController.dispose();
+-    super.dispose();
++  Future<void> _stopRecording() async {
++    await _speech.stop();
++    setState(() => _isRecording = false);
++    if (_inputCtrl.text.trim().isNotEmpty) {
++      _sendMessage(_inputCtrl.text);
++    }
+   }
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      backgroundColor: const Color(0xFFECE5DD),
+-      appBar: _buildHeader(context),
++      backgroundColor: const Color(0xFFF4F5F0),
+       body: Column(
+         children: [
++          _Header(
++            showTips: _showTips,
++            onToggleTips: () => setState(() => _showTips = !_showTips),
++            onBack: () => context.go('/home'),
++          ),
+           Expanded(
+             child: ListView.builder(
+-              controller: _scrollController,
+-              padding: const EdgeInsets.all(16),
+-              physics: const BouncingScrollPhysics(),
+-              itemCount: _messages.length + (_assistantTyping ? 1 : 0),
++              controller: _scrollCtrl,
++              padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
++              itemCount: _messages.length + (_isTyping ? 1 : 0) + 1,
+               itemBuilder: (context, index) {
+-                if (index == _messages.length && _assistantTyping) {
+-                  return _buildThinkingIndicator();
++                if (index == 0) return const _DateSeparator(label: 'Hoy · Ahora');
++                final adjIndex = index - 1;
++                if (adjIndex < _messages.length) {
++                  final msg = _messages[adjIndex];
++                  return Padding(
++                    padding: const EdgeInsets.only(bottom: 14),
++                    child: msg.isUser
++                        ? _UserBubble(text: msg.text)
++                        : _BotBubble(text: msg.text, isError: msg.isError, isTalking: false),
++                  );
+                 }
+-                final msg = _messages[index];
+-                return _buildMessageWithAnimation(msg, index);
++                // typing indicator
++                return const Padding(
++                  padding: EdgeInsets.only(bottom: 14),
++                  child: _BotTyping(),
++                );
+               },
+             ),
+           ),
+-          const Divider(height: 1),
+-          _buildInputBar(),
++          _SuggestedChipsBar(
++            chips: _suggestedChips,
++            onTap: _sendMessage,
++          ),
++          Padding(
++            padding: EdgeInsets.only(
++              left: 16,
++              right: 16,
++              top: 6,
++              bottom: 20 + MediaQuery.of(context).padding.bottom,
++            ),
++            child: _isRecording
++                ? _RecordingBar(onStop: _stopRecording)
++                : _InputBar(
++                    controller: _inputCtrl,
++                    onSend: () => _sendMessage(_inputCtrl.text),
++                    onMic: _startRecording,
++                  ),
++          ),
+         ],
+       ),
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// HEADER
++// ═════════════════════════════════════════════════════════════════
++
++class _Header extends StatelessWidget {
++  final bool showTips;
++  final VoidCallback onToggleTips;
++  final VoidCallback onBack;
++
++  const _Header({
++    required this.showTips,
++    required this.onToggleTips,
++    required this.onBack,
++  });
+ 
+-  AppBar _buildHeader(BuildContext context) {
+-    return AppBar(
+-      backgroundColor: const Color(0xFF2E7D32),
+-      elevation: 0,
+-      leading: IconButton(
+-        icon: const Icon(Icons.arrow_back, color: Colors.white),
+-        onPressed: () => context.go('/home'),
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      decoration: const BoxDecoration(
++        gradient: LinearGradient(
++          begin: Alignment.topLeft,
++          end: Alignment.bottomRight,
++          colors: [BovaraColors.primary, Color(0xFF1B5C2C)],
++        ),
+       ),
+-      title: Row(
+-        children: [
+-          TweenAnimationBuilder<double>(
+-            tween: Tween(begin: 0.0, end: 1.0),
+-            duration: const Duration(milliseconds: 600),
+-            curve: Curves.elasticOut,
+-            builder: (context, value, child) {
+-              return Transform.scale(
+-                scale: value,
+-                child: Container(
+-                  width: 40,
+-                  height: 40,
+-                  decoration: BoxDecoration(
+-                    color: Colors.white.withOpacity(0.2),
+-                    shape: BoxShape.circle,
+-                  ),
+-                  child: const Icon(
+-                    Icons.smart_toy_outlined,
+-                    color: Colors.white,
+-                    size: 24,
++      child: SafeArea(
++        bottom: false,
++        child: Padding(
++          padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
++          child: Column(
++            children: [
++              Row(
++                children: [
++                  // Botón atrás
++                  Material(
++                    color: Colors.white.withValues(alpha: 0.15),
++                    borderRadius: BorderRadius.circular(12),
++                    child: InkWell(
++                      onTap: onBack,
++                      borderRadius: BorderRadius.circular(12),
++                      child: Container(
++                        width: 38,
++                        height: 38,
++                        alignment: Alignment.center,
++                        child: const Icon(
++                          Icons.arrow_back_ios_new,
++                          size: 15,
++                          color: Colors.white,
++                        ),
++                      ),
++                    ),
+                   ),
+-                ),
+-              );
+-            },
+-          ),
+-          const SizedBox(width: 12),
+-          Expanded(
+-            child: Column(
+-              crossAxisAlignment: CrossAxisAlignment.start,
+-              mainAxisSize: MainAxisSize.min,
+-              children: [
+-                const Text(
+-                  'Asistente Bovara',
+-                  style: TextStyle(
+-                    fontSize: 16,
+-                    fontWeight: FontWeight.w500,
+-                    color: Colors.white,
++                  const SizedBox(width: 11),
++                  // Avatar Bovi
++                  Container(
++                    width: 46,
++                    height: 46,
++                    decoration: BoxDecoration(
++                      color: Colors.white.withValues(alpha: 0.92),
++                      shape: BoxShape.circle,
++                      boxShadow: [
++                        BoxShadow(
++                          color: Colors.black.withValues(alpha: 0.28),
++                          blurRadius: 14,
++                          offset: const Offset(0, 6),
++                          spreadRadius: -6,
++                        ),
++                      ],
++                    ),
++                    child: const Center(child: _MiniBoviFace(size: 30)),
+                   ),
+-                  overflow: TextOverflow.ellipsis,
+-                ),
+-                Row(
+-                  children: [
+-                    TweenAnimationBuilder<double>(
+-                      tween: Tween(begin: 0.6, end: 1.0),
+-                      duration: const Duration(milliseconds: 1000),
+-                      curve: Curves.easeInOut,
+-                      builder: (context, value, child) {
+-                        return Opacity(
+-                          opacity: value,
+-                          child: Container(
+-                            width: 8,
+-                            height: 8,
+-                            decoration: BoxDecoration(
+-                              color: _assistantTyping ? Colors.amber : Colors.greenAccent,
+-                              shape: BoxShape.circle,
+-                              boxShadow: [
+-                                BoxShadow(
+-                                  color: (_assistantTyping ? Colors.amber : Colors.greenAccent).withOpacity(0.6),
+-                                  blurRadius: 8,
+-                                  spreadRadius: 2,
+-                                ),
+-                              ],
++                  const SizedBox(width: 12),
++                  // Nombre + chip IA + estado
++                  Expanded(
++                    child: Column(
++                      crossAxisAlignment: CrossAxisAlignment.start,
++                      children: [
++                        Row(
++                          children: [
++                            Text('Bovi',
++                                style: BovaraText.title(color: Colors.white).copyWith(
++                                  fontSize: 19,
++                                  fontWeight: FontWeight.w800,
++                                  letterSpacing: -0.19,
++                                )),
++                            const SizedBox(width: 7),
++                            Container(
++                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
++                              decoration: BoxDecoration(
++                                color: const Color(0xFFBFE6C6),
++                                borderRadius: BorderRadius.circular(6),
++                              ),
++                              child: Text('IA',
++                                  style: BovaraText.label(
++                                    size: 9,
++                                    color: BovaraColors.primarySoftText,
++                                  ).copyWith(letterSpacing: 1)),
+                             ),
+-                          ),
+-                        );
+-                      },
+-                      onEnd: () => setState(() {}),
++                          ],
++                        ),
++                        const SizedBox(height: 1),
++                        Row(
++                          children: [
++                            Container(
++                              width: 7,
++                              height: 7,
++                              decoration: const BoxDecoration(
++                                color: Color(0xFF8BE0A0),
++                                shape: BoxShape.circle,
++                              ),
++                            ),
++                            const SizedBox(width: 6),
++                            Text(
++                              'En línea · funciona sin internet',
++                              style: BovaraText.label(
++                                size: 11.5,
++                                color: Colors.white.withValues(alpha: 0.85),
++                              ),
++                            ),
++                          ],
++                        ),
++                      ],
+                     ),
+-                    const SizedBox(width: 6),
+-                    if (_speechEnabled)
+-                      Padding(
+-                        padding: const EdgeInsets.only(right: 4),
+-                        child: Icon(
+-                          Icons.mic,
+-                          color: Colors.white.withOpacity(0.7),
+-                          size: 12,
++                  ),
++                ],
++              ),
++              const SizedBox(height: 12),
++              // Toggle "Recomendaciones de uso"
++              InkWell(
++                onTap: onToggleTips,
++                borderRadius: BorderRadius.circular(8),
++                child: Padding(
++                  padding: const EdgeInsets.symmetric(vertical: 4),
++                  child: Row(
++                    children: [
++                      Text(
++                        'RECOMENDACIONES DE USO',
++                        style: BovaraText.label(
++                          size: 10.5,
++                          color: Colors.white.withValues(alpha: 0.78),
++                        ).copyWith(letterSpacing: 1.4),
++                      ),
++                      const SizedBox(width: 9),
++                      Expanded(
++                        child: Container(
++                          height: 1,
++                          color: Colors.white.withValues(alpha: 0.18),
+                         ),
+                       ),
+-                    Text(
+-                      _assistantTyping ? 'Pensando...' : 'IA activa',
+-                      style: TextStyle(
+-                        fontSize: 12,
+-                        color: Colors.white.withOpacity(0.8),
++                      const SizedBox(width: 9),
++                      AnimatedRotation(
++                        duration: const Duration(milliseconds: 240),
++                        turns: showTips ? 0.5 : 0,
++                        child: Icon(
++                          Icons.keyboard_arrow_down,
++                          size: 18,
++                          color: Colors.white.withValues(alpha: 0.85),
++                        ),
+                       ),
+-                    ),
+-                  ],
++                    ],
++                  ),
+                 ),
+-              ],
++              ),
++              // Cards horizontales de tips (colapsables)
++              AnimatedSize(
++                duration: const Duration(milliseconds: 260),
++                curve: Curves.easeOutCubic,
++                child: showTips
++                    ? const Padding(
++                        padding: EdgeInsets.only(top: 12),
++                        child: SizedBox(
++                          height: 108,
++                          child: _TipCards(),
++                        ),
++                      )
++                    : const SizedBox(width: double.infinity),
++              ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++class _TipCards extends StatelessWidget {
++  const _TipCards();
++
++  @override
++  Widget build(BuildContext context) {
++    final tips = <_Tip>[
++      _Tip(icon: Icons.mic_none_rounded, iconColor: BovaraColors.primary,
++        title: 'Habla o escribe',
++        body: 'Pregunta por voz con el micrófono o escríbele.'),
++      _Tip(icon: Icons.favorite_rounded, iconColor: BovaraColors.celo,
++        title: 'Consulta al instante',
++        body: 'Celos, vacunas, pesos y tareas del día.'),
++      _Tip(icon: Icons.cloud_off_outlined, iconColor: BovaraColors.danger,
++        title: 'Sin conexión',
++        body: 'Bovi responde aunque no haya señal.'),
++      _Tip(icon: Icons.bolt_rounded, iconColor: BovaraColors.warning,
++        title: 'Atajos rápidos',
++        body: 'Toca una sugerencia para empezar rápido.'),
++    ];
++    return ListView.separated(
++      scrollDirection: Axis.horizontal,
++      itemCount: tips.length,
++      separatorBuilder: (_, __) => const SizedBox(width: 10),
++      itemBuilder: (context, i) => _TipCard(tip: tips[i]),
++    );
++  }
++}
++
++class _Tip {
++  final IconData icon;
++  final Color iconColor;
++  final String title;
++  final String body;
++  _Tip({
++    required this.icon,
++    required this.iconColor,
++    required this.title,
++    required this.body,
++  });
++}
++
++class _TipCard extends StatelessWidget {
++  final _Tip tip;
++  const _TipCard({required this.tip});
++
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      width: 166,
++      padding: const EdgeInsets.all(12),
++      decoration: BoxDecoration(
++        color: Colors.white.withValues(alpha: 0.14),
++        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
++        borderRadius: BorderRadius.circular(16),
++      ),
++      child: Column(
++        crossAxisAlignment: CrossAxisAlignment.start,
++        children: [
++          Container(
++            width: 30,
++            height: 30,
++            decoration: BoxDecoration(
++              color: Colors.white,
++              borderRadius: BorderRadius.circular(9),
+             ),
++            child: Icon(tip.icon, size: 16, color: tip.iconColor),
++          ),
++          const SizedBox(height: 9),
++          Text(tip.title,
++              style: BovaraText.label(size: 13, color: Colors.white)
++                  .copyWith(fontWeight: FontWeight.w800)),
++          const SizedBox(height: 3),
++          Text(
++            tip.body,
++            style: BovaraText.body(
++              size: 11,
++              color: Colors.white.withValues(alpha: 0.82),
++            ).copyWith(fontWeight: FontWeight.w500, height: 1.35),
+           ),
+         ],
+       ),
+-      centerTitle: false,
+-      actions: [
+-        IconButton(
+-          onPressed: _clearChat,
+-          icon: const Icon(Icons.refresh, color: Colors.white, size: 22),
+-        ),
+-        IconButton(
+-          onPressed: () {},
+-          icon: const Icon(Icons.more_vert, color: Colors.white, size: 24),
+-        ),
+-      ],
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// AVATAR DE BOVI (cabeza animada estilo prototipo)
++// ═════════════════════════════════════════════════════════════════
++
++class _MiniBoviFace extends StatelessWidget {
++  final double size;
++  const _MiniBoviFace({this.size = 30});
+ 
+-  void _clearChat() {
+-    showDialog(
+-      context: context,
+-      builder: (ctx) => AlertDialog(
+-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+-        title: const Text('Reiniciar conversación'),
+-        content: const Text('¿Deseas borrar todo el historial de chat?'),
+-        actions: [
+-          TextButton(
+-            onPressed: () => Navigator.of(ctx).pop(),
+-            child: const Text('Cancelar'),
++  @override
++  Widget build(BuildContext context) {
++    // Proporciones del avatar del header (pequeño, estático)
++    return SizedBox(
++      width: size,
++      height: size * 0.83,
++      child: Stack(
++        alignment: Alignment.center,
++        children: [
++          // Orejas
++          Positioned(
++            left: 0,
++            top: size * 0.2,
++            child: Transform.rotate(
++              angle: -0.314,
++              child: Container(
++                width: size * 0.3,
++                height: size * 0.28,
++                decoration: BoxDecoration(
++                  color: const Color(0xFFD7A883),
++                  borderRadius: BorderRadius.circular(size),
++                ),
++              ),
++            ),
+           ),
+-          ElevatedButton(
+-            onPressed: () {
+-              Navigator.of(ctx).pop();
+-              setState(() {
+-                _messages.clear();
+-                _addWelcomeMessage();
+-              });
+-            },
+-            style: ElevatedButton.styleFrom(
+-              backgroundColor: const Color(0xFF2E7D32),
+-              foregroundColor: Colors.white,
++          Positioned(
++            right: 0,
++            top: size * 0.2,
++            child: Transform.rotate(
++              angle: 0.314,
++              child: Container(
++                width: size * 0.3,
++                height: size * 0.28,
++                decoration: BoxDecoration(
++                  color: const Color(0xFFD7A883),
++                  borderRadius: BorderRadius.circular(size),
++                ),
++              ),
++            ),
++          ),
++          // Cabeza
++          Positioned(
++            top: 0,
++            child: Container(
++              width: size * 0.75,
++              height: size * 0.75,
++              decoration: BoxDecoration(
++                color: const Color(0xFFF4EDE0),
++                borderRadius: BorderRadius.circular(size),
++              ),
++              child: Stack(
++                alignment: Alignment.center,
++                children: [
++                  // Mancha izq
++                  Positioned(
++                    top: size * 0.09,
++                    left: size * 0.11,
++                    child: Container(
++                      width: size * 0.19,
++                      height: size * 0.17,
++                      decoration: const BoxDecoration(
++                        color: Color(0xFF7A5535),
++                        shape: BoxShape.circle,
++                      ),
++                    ),
++                  ),
++                  // Ojos
++                  Positioned(
++                    top: size * 0.3,
++                    left: size * 0.16,
++                    child: Container(
++                      width: size * 0.12,
++                      height: size * 0.12,
++                      decoration: const BoxDecoration(
++                        color: Colors.white,
++                        shape: BoxShape.circle,
++                      ),
++                      child: Center(
++                        child: Container(
++                          width: size * 0.06,
++                          height: size * 0.06,
++                          decoration: const BoxDecoration(
++                            color: Color(0xFF2B2018),
++                            shape: BoxShape.circle,
++                          ),
++                        ),
++                      ),
++                    ),
++                  ),
++                  Positioned(
++                    top: size * 0.3,
++                    right: size * 0.16,
++                    child: Container(
++                      width: size * 0.12,
++                      height: size * 0.12,
++                      decoration: const BoxDecoration(
++                        color: Colors.white,
++                        shape: BoxShape.circle,
++                      ),
++                      child: Center(
++                        child: Container(
++                          width: size * 0.06,
++                          height: size * 0.06,
++                          decoration: const BoxDecoration(
++                            color: Color(0xFF2B2018),
++                            shape: BoxShape.circle,
++                          ),
++                        ),
++                      ),
++                    ),
++                  ),
++                  // Hocico
++                  Positioned(
++                    bottom: size * 0.06,
++                    child: Container(
++                      width: size * 0.4,
++                      height: size * 0.22,
++                      decoration: BoxDecoration(
++                        color: const Color(0xFFEBB9A8),
++                        borderRadius: BorderRadius.circular(size),
++                      ),
++                    ),
++                  ),
++                ],
++              ),
+             ),
+-            child: const Text('Borrar'),
+           ),
+         ],
+       ),
+     );
+   }
++}
+ 
+-  Widget _buildMessageWithAnimation(ChatMessage message, int index) {
+-    return TweenAnimationBuilder<double>(
+-      key: ValueKey(index),
+-      tween: Tween(begin: 0.0, end: 1.0),
+-      duration: Duration(milliseconds: 300 + (index * 50)),
+-      curve: Curves.easeOut,
+-      builder: (context, value, child) {
+-        return Transform.translate(
+-          offset: Offset(0, 20 * (1 - value)),
+-          child: Opacity(
+-            opacity: value,
+-            child: child,
+-          ),
+-        );
+-      },
+-      child: _buildMessage(message),
++// ═════════════════════════════════════════════════════════════════
++// MENSAJES
++// ═════════════════════════════════════════════════════════════════
++
++class _ChatMessage {
++  final bool isUser;
++  final String text;
++  final String? toolUsed;
++  final bool isError;
++  _ChatMessage({required this.isUser, required this.text, this.toolUsed, this.isError = false});
++  factory _ChatMessage.user({required String text}) => _ChatMessage(isUser: true, text: text);
++  factory _ChatMessage.bot({required String text, String? toolUsed, bool isError = false}) =>
++      _ChatMessage(isUser: false, text: text, toolUsed: toolUsed, isError: isError);
++}
++
++class _DateSeparator extends StatelessWidget {
++  final String label;
++  const _DateSeparator({required this.label});
++
++  @override
++  Widget build(BuildContext context) {
++    return Center(
++      child: Container(
++        margin: const EdgeInsets.only(bottom: 14),
++        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
++        decoration: BoxDecoration(
++          color: const Color(0xFFEAEBE4),
++          borderRadius: BorderRadius.circular(20),
++        ),
++        child: Text(
++          label,
++          style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted),
++        ),
++      ),
+     );
+   }
++}
+ 
+-  Widget _buildMessage(ChatMessage message) {
+-    final isUser = message.isUser;
+-    return Padding(
+-      padding: const EdgeInsets.only(bottom: 16),
+-      child: Row(
+-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+-        crossAxisAlignment: CrossAxisAlignment.start,
+-        children: [
+-          Flexible(
+-            child: isUser ? _buildUserMessage(message) : _buildAssistantMessage(message),
++class _UserBubble extends StatelessWidget {
++  final String text;
++  const _UserBubble({required this.text});
++
++  @override
++  Widget build(BuildContext context) {
++    return Row(
++      mainAxisAlignment: MainAxisAlignment.end,
++      children: [
++        ConstrainedBox(
++          constraints: BoxConstraints(
++            maxWidth: MediaQuery.of(context).size.width * 0.78,
+           ),
+-        ],
+-      ),
++          child: Container(
++            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
++            decoration: BoxDecoration(
++              gradient: const LinearGradient(
++                begin: Alignment(-0.3, -1),
++                end: Alignment(0.5, 1),
++                colors: [BovaraColors.primary, BovaraColors.primaryDark],
++              ),
++              borderRadius: const BorderRadius.only(
++                topLeft: Radius.circular(18),
++                topRight: Radius.circular(18),
++                bottomLeft: Radius.circular(18),
++                bottomRight: Radius.circular(5),
++              ),
++              boxShadow: [
++                BoxShadow(
++                  color: BovaraColors.primaryDark.withValues(alpha: 0.5),
++                  blurRadius: 18,
++                  offset: const Offset(0, 8),
++                  spreadRadius: -10,
++                ),
++              ],
++            ),
++            child: Text(
++              text,
++              style: BovaraText.body(size: 14, color: Colors.white).copyWith(
++                fontWeight: FontWeight.w500,
++                height: 1.45,
++              ),
++            ),
++          ),
++        ),
++      ],
+     );
+   }
++}
++
++class _BotBubble extends StatelessWidget {
++  final String text;
++  final bool isError;
++  final bool isTalking;
++
++  const _BotBubble({
++    required this.text,
++    this.isError = false,
++    this.isTalking = false,
++  });
+ 
+-  Widget _buildUserMessage(ChatMessage message) {
+-    return Column(
++  @override
++  Widget build(BuildContext context) {
++    return Row(
+       crossAxisAlignment: CrossAxisAlignment.end,
+       children: [
+         Container(
+-          padding: const EdgeInsets.all(12),
++          width: 32,
++          height: 32,
+           decoration: BoxDecoration(
+-            color: const Color(0xFF2E7D32),
+-            borderRadius: const BorderRadius.only(
+-              topLeft: Radius.circular(16),
+-              topRight: Radius.circular(16),
+-              bottomLeft: Radius.circular(16),
+-              bottomRight: Radius.circular(6),
+-            ),
+-            boxShadow: [
+-              BoxShadow(
+-                color: const Color(0xFF2E7D32).withOpacity(0.3),
+-                blurRadius: 8,
+-                offset: const Offset(0, 2),
+-              ),
+-            ],
++            color: const Color(0xFFE7F2E9),
++            border: Border.all(color: const Color(0xFFCBE3CE), width: 1.5),
++            shape: BoxShape.circle,
+           ),
+-          child: Column(
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              if (message.isVoiceMessage)
+-                Padding(
+-                  padding: const EdgeInsets.only(bottom: 6),
+-                  child: Row(
+-                    mainAxisSize: MainAxisSize.min,
+-                    children: const [
+-                      Icon(Icons.mic, color: Colors.white70, size: 14),
+-                      SizedBox(width: 4),
+-                      Text(
+-                        'Mensaje de voz',
+-                        style: TextStyle(
+-                          fontSize: 11,
+-                          color: Colors.white70,
+-                          fontStyle: FontStyle.italic,
+-                        ),
+-                      ),
+-                    ],
+-                  ),
+-                ),
+-              Text(
+-                message.text,
+-                style: const TextStyle(
+-                  fontSize: 14,
+-                  color: Colors.white,
+-                  height: 1.4,
++          child: const Center(child: _MiniBoviFace(size: 20)),
++        ),
++        const SizedBox(width: 9),
++        Flexible(
++          child: ConstrainedBox(
++            constraints: BoxConstraints(
++              maxWidth: MediaQuery.of(context).size.width * 0.78,
++            ),
++            child: Container(
++              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
++              decoration: BoxDecoration(
++                color: isError ? BovaraColors.dangerSoftBg : Colors.white,
++                borderRadius: const BorderRadius.only(
++                  topLeft: Radius.circular(18),
++                  topRight: Radius.circular(18),
++                  bottomLeft: Radius.circular(5),
++                  bottomRight: Radius.circular(18),
+                 ),
+-              ),
+-              const SizedBox(height: 4),
+-              Row(
+-                mainAxisSize: MainAxisSize.min,
+-                children: [
+-                  Opacity(
+-                    opacity: 0.8,
+-                    child: Text(
+-                      message.timestamp,
+-                      style: const TextStyle(fontSize: 11, color: Colors.white),
+-                    ),
++                boxShadow: const [
++                  BoxShadow(
++                    color: Color(0x14000000),
++                    blurRadius: 16,
++                    offset: Offset(0, 6),
++                    spreadRadius: -10,
+                   ),
+-                  const SizedBox(width: 4),
+-                  const Icon(Icons.done_all, color: Colors.white70, size: 14),
+                 ],
+               ),
+-            ],
++              child: Text(
++                text,
++                style: BovaraText.body(size: 14, color: BovaraColors.textPrimary).copyWith(
++                  fontWeight: FontWeight.w500,
++                  height: 1.5,
++                ),
++              ),
++            ),
+           ),
+         ),
+       ],
+     );
+   }
++}
++
++class _BotTyping extends StatefulWidget {
++  const _BotTyping();
++
++  @override
++  State<_BotTyping> createState() => _BotTypingState();
++}
+ 
+-  Widget _buildAssistantMessage(ChatMessage message) {
+-    return Column(
+-      crossAxisAlignment: CrossAxisAlignment.start,
++class _BotTypingState extends State<_BotTyping> with SingleTickerProviderStateMixin {
++  late final AnimationController _ac;
++
++  @override
++  void initState() {
++    super.initState();
++    _ac = AnimationController(
++      vsync: this,
++      duration: const Duration(milliseconds: 1200),
++    )..repeat();
++  }
++
++  @override
++  void dispose() {
++    _ac.dispose();
++    super.dispose();
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    return Row(
++      crossAxisAlignment: CrossAxisAlignment.end,
+       children: [
++        // Avatar de Bovi HABLANDO (parpadea + boca se mueve)
+         Container(
+-          padding: const EdgeInsets.all(12),
++          width: 40,
++          height: 40,
+           decoration: BoxDecoration(
++            color: const Color(0xFFE7F2E9),
++            border: Border.all(color: const Color(0xFFCBE3CE), width: 1.5),
++            shape: BoxShape.circle,
++          ),
++          child: const Center(child: _MiniBoviFace(size: 28)),
++        ),
++        const SizedBox(width: 9),
++        Container(
++          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
++          decoration: const BoxDecoration(
+             color: Colors.white,
+-            borderRadius: const BorderRadius.only(
+-              topLeft: Radius.circular(16),
+-              topRight: Radius.circular(16),
+-              bottomLeft: Radius.circular(6),
+-              bottomRight: Radius.circular(16),
++            borderRadius: BorderRadius.only(
++              topLeft: Radius.circular(18),
++              topRight: Radius.circular(18),
++              bottomLeft: Radius.circular(5),
++              bottomRight: Radius.circular(18),
+             ),
+             boxShadow: [
+               BoxShadow(
+-                color: Colors.black.withOpacity(0.08),
+-                blurRadius: 8,
+-                offset: const Offset(0, 2),
++                color: Color(0x14000000),
++                blurRadius: 16,
++                offset: Offset(0, 6),
++                spreadRadius: -10,
+               ),
+             ],
+           ),
+-          child: Column(
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              Text(
+-                message.text,
+-                style: const TextStyle(
+-                  fontSize: 14,
+-                  color: Color(0xFF212121),
+-                  height: 1.5,
+-                ),
+-              ),
+-              const SizedBox(height: 8),
+-              Row(
+-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+-                children: [
+-                  Text(
+-                    message.timestamp,
+-                    style: const TextStyle(fontSize: 11, color: Color(0xFF9E9E9E)),
+-                  ),
+-                  TweenAnimationBuilder<double>(
+-                    tween: Tween(begin: 0.0, end: 1.0),
+-                    duration: const Duration(milliseconds: 400),
+-                    curve: Curves.elasticOut,
+-                    builder: (context, value, child) {
+-                      return Transform.scale(
+-                        scale: value,
+-                        child: Container(
+-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+-                          decoration: BoxDecoration(
+-                            color: const Color(0xFF2E7D32),
+-                            borderRadius: BorderRadius.circular(12),
+-                          ),
+-                          child: Row(
+-                            mainAxisSize: MainAxisSize.min,
+-                            children: const [
+-                              Icon(Icons.auto_awesome, color: Colors.white, size: 12),
+-                              SizedBox(width: 4),
+-                              Text(
+-                                'Bovara AI',
+-                                style: TextStyle(
+-                                  fontSize: 11,
+-                                  fontWeight: FontWeight.w600,
+-                                  color: Colors.white,
+-                                ),
+-                              ),
+-                            ],
+-                          ),
+-                        ),
+-                      );
+-                    },
+-                  ),
+-                ],
+-              ),
+-            ],
++          child: AnimatedBuilder(
++            animation: _ac,
++            builder: (context, _) => Row(
++              mainAxisSize: MainAxisSize.min,
++              children: [
++                _dot(0),
++                const SizedBox(width: 5),
++                _dot(0.2),
++                const SizedBox(width: 5),
++                _dot(0.4),
++              ],
++            ),
+           ),
+         ),
+       ],
+     );
+   }
+ 
+-  Widget _buildThinkingIndicator() {
+-    return Padding(
+-      padding: const EdgeInsets.only(bottom: 16),
+-      child: Row(
+-        mainAxisAlignment: MainAxisAlignment.start,
+-        children: [
+-          Container(
+-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+-            decoration: BoxDecoration(
+-              color: Colors.white,
+-              borderRadius: BorderRadius.circular(16),
+-              boxShadow: [
+-                BoxShadow(
+-                  color: Colors.black.withOpacity(0.08),
+-                  blurRadius: 8,
+-                  offset: const Offset(0, 2),
+-                ),
+-              ],
+-            ),
+-            child: Row(
+-              mainAxisSize: MainAxisSize.min,
+-              children: [
+-                _buildThinkingDot(0),
+-                const SizedBox(width: 6),
+-                _buildThinkingDot(1),
+-                const SizedBox(width: 6),
+-                _buildThinkingDot(2),
+-                const SizedBox(width: 12),
+-                RotationTransition(
+-                  turns: _thinkingAnimation,
+-                  child: const Icon(Icons.auto_awesome, color: Color(0xFF2E7D32), size: 16),
+-                ),
+-              ],
+-            ),
++  Widget _dot(double phase) {
++    final v = _ac.value;
++    final t = ((v + phase) % 1.0);
++    // Onda simple: opacidad + escala
++    final scale = 0.6 + 0.4 * (0.5 + 0.5 * (t < 0.5 ? t : 1 - t) * 2);
++    final opacity = 0.4 + 0.6 * (t < 0.5 ? t * 2 : (1 - t) * 2);
++    return Opacity(
++      opacity: opacity,
++      child: Transform.scale(
++        scale: scale,
++        child: Container(
++          width: 7,
++          height: 7,
++          decoration: const BoxDecoration(
++            color: BovaraColors.primary,
++            shape: BoxShape.circle,
+           ),
+-        ],
++        ),
+       ),
+     );
+   }
++}
++
++// ═════════════════════════════════════════════════════════════════
++// CHIPS SUGERIDOS
++// ═════════════════════════════════════════════════════════════════
+ 
+-  Widget _buildThinkingDot(int index) {
+-    return TweenAnimationBuilder<double>(
+-      tween: Tween(begin: 0.0, end: 1.0),
+-      duration: Duration(milliseconds: 600 + (index * 150)),
+-      curve: Curves.easeInOut,
+-      builder: (context, value, child) {
+-        final scale = 0.5 + (value * 0.5);
+-        final opacity = 0.3 + (value * 0.7);
+-        return Transform.scale(
+-          scale: scale,
+-          child: Opacity(
+-            opacity: opacity,
++class _SuggestedChipsBar extends StatelessWidget {
++  final List<String> chips;
++  final ValueChanged<String> onTap;
++
++  const _SuggestedChipsBar({required this.chips, required this.onTap});
++
++  @override
++  Widget build(BuildContext context) {
++    return SizedBox(
++      height: 42,
++      child: ListView.separated(
++        scrollDirection: Axis.horizontal,
++        padding: const EdgeInsets.symmetric(horizontal: 16),
++        itemCount: chips.length,
++        separatorBuilder: (_, __) => const SizedBox(width: 8),
++        itemBuilder: (context, i) {
++          return InkWell(
++            onTap: () => onTap(chips[i]),
++            borderRadius: BorderRadius.circular(20),
+             child: Container(
+-              width: 10,
+-              height: 10,
++              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+               decoration: BoxDecoration(
+-                color: const Color(0xFF2E7D32).withOpacity(opacity),
+-                shape: BoxShape.circle,
++                color: const Color(0xFFE7F2E9),
++                border: Border.all(color: const Color(0xFFCFE6D3)),
++                borderRadius: BorderRadius.circular(20),
++              ),
++              child: Text(
++                chips[i],
++                style: BovaraText.label(size: 12.5, color: BovaraColors.primarySoftText),
+               ),
+             ),
+-          ),
+-        );
+-      },
+-      onEnd: () {
+-        if (mounted) setState(() {});
+-      },
++          );
++        },
++      ),
+     );
+   }
++}
+ 
+-  Widget _buildInputBar() {
+-    return SafeArea(
+-      top: false,
+-      child: Container(
+-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+-        color: const Color(0xFFF5F5F5),
+-        child: Column(
+-          mainAxisSize: MainAxisSize.min,
+-          children: [
+-            if (_isListening)
+-              Container(
+-                margin: const EdgeInsets.only(bottom: 8),
+-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+-                decoration: BoxDecoration(
+-                  color: const Color(0xFF2E7D32).withOpacity(0.1),
+-                  borderRadius: BorderRadius.circular(8),
+-                ),
+-                child: Row(
+-                  children: [
+-                    ScaleTransition(
+-                      scale: _pulseAnimation,
+-                      child: const Icon(Icons.mic, color: Color(0xFF2E7D32), size: 20),
+-                    ),
+-                    const SizedBox(width: 12),
+-                    Expanded(
+-                      child: Text(
+-                        _lastWords.isEmpty ? 'Escuchando...' : _lastWords,
+-                        style: const TextStyle(
+-                          fontSize: 14,
+-                          color: Color(0xFF2E7D32),
+-                          fontWeight: FontWeight.w500,
+-                        ),
+-                      ),
+-                    ),
+-                  ],
++// ═════════════════════════════════════════════════════════════════
++// INPUT + RECORDING
++// ═════════════════════════════════════════════════════════════════
++
++class _InputBar extends StatelessWidget {
++  final TextEditingController controller;
++  final VoidCallback onSend;
++  final VoidCallback onMic;
++
++  const _InputBar({
++    required this.controller,
++    required this.onSend,
++    required this.onMic,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Row(
++      children: [
++        Expanded(
++          child: Container(
++            padding: const EdgeInsets.only(left: 18, right: 8, top: 8, bottom: 8),
++            decoration: BoxDecoration(
++              color: Colors.white,
++              borderRadius: BorderRadius.circular(24),
++              boxShadow: const [
++                BoxShadow(
++                  color: Color(0x14000000),
++                  blurRadius: 16,
++                  offset: Offset(0, 6),
++                  spreadRadius: -10,
+                 ),
+-              ),
+-            Row(
++              ],
++            ),
++            child: Row(
+               children: [
+                 Expanded(
+-                  child: Container(
+-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+-                    decoration: BoxDecoration(
+-                      color: Colors.white,
+-                      borderRadius: BorderRadius.circular(999),
+-                      boxShadow: const [
+-                        BoxShadow(
+-                          color: Color(0x0D000000),
+-                          blurRadius: 2,
+-                          offset: Offset(0, 1),
+-                        ),
+-                      ],
+-                    ),
+-                    child: TextField(
+-                      controller: _inputController,
+-                      minLines: 1,
+-                      maxLines: 4,
+-                      decoration: const InputDecoration(
+-                        hintText: 'Pregúntale a Bovara...',
+-                        border: InputBorder.none,
++                  child: TextField(
++                    controller: controller,
++                    minLines: 1,
++                    maxLines: 4,
++                    textInputAction: TextInputAction.send,
++                    onSubmitted: (_) => onSend(),
++                    style: BovaraText.body(size: 14, color: BovaraColors.textPrimary),
++                    cursorColor: BovaraColors.primary,
++                    decoration: InputDecoration(
++                      hintText: 'Escribe o toca el micrófono…',
++                      hintStyle: BovaraText.body(
++                        size: 14,
++                        color: BovaraColors.textDisabled,
+                       ),
+-                      onSubmitted: (_) => _handleSend(),
++                      border: InputBorder.none,
++                      isDense: true,
++                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                     ),
+                   ),
+                 ),
+                 const SizedBox(width: 8),
+-                if (_speechEnabled)
+-                  AnimatedContainer(
+-                    duration: const Duration(milliseconds: 200),
++                InkWell(
++                  onTap: onMic,
++                  borderRadius: BorderRadius.circular(19),
++                  child: Container(
++                    width: 38,
++                    height: 38,
+                     decoration: BoxDecoration(
+-                      color: _isListening ? const Color(0xFF2E7D32) : Colors.white,
++                      color: const Color(0xFFE7F2E9),
+                       shape: BoxShape.circle,
+-                      boxShadow: [
+-                        if (_isListening)
+-                          const BoxShadow(
+-                            color: Color(0x332E7D32),
+-                            blurRadius: 8,
+-                            spreadRadius: 2,
+-                          ),
+-                      ],
+-                    ),
+-                    child: IconButton(
+-                      onPressed: _toggleListening,
+-                      icon: Icon(
+-                        _isListening ? Icons.mic : Icons.mic_none,
+-                        color: _isListening ? Colors.white : const Color(0xFF2E7D32),
+-                      ),
+                     ),
++                    child: const Icon(Icons.mic, size: 20, color: BovaraColors.primary),
+                   ),
+-                const SizedBox(width: 8),
+-                IconButton(
+-                  onPressed: _sending ? null : _handleSend,
+-                  icon: _sending
+-                      ? const SizedBox(
+-                    width: 18,
+-                    height: 18,
+-                    child: CircularProgressIndicator(strokeWidth: 2),
+-                  )
+-                      : const Icon(Icons.send_rounded, color: Color(0xFF2E7D32)),
+                 ),
+               ],
+             ),
+-          ],
++          ),
+         ),
+-      ),
++        const SizedBox(width: 10),
++        // Botón enviar
++        Material(
++          color: Colors.transparent,
++          child: InkWell(
++            onTap: onSend,
++            customBorder: const CircleBorder(),
++            child: Container(
++              width: 50,
++              height: 50,
++              decoration: BoxDecoration(
++                gradient: const LinearGradient(
++                  begin: Alignment(-0.3, -1),
++                  end: Alignment(0.5, 1),
++                  colors: [Color(0xFF3DA35D), BovaraColors.primary],
++                ),
++                shape: BoxShape.circle,
++                boxShadow: [
++                  BoxShadow(
++                    color: BovaraColors.primary.withValues(alpha: 0.7),
++                    blurRadius: 22,
++                    offset: const Offset(0, 10),
++                    spreadRadius: -8,
++                  ),
++                ],
++              ),
++              child: const Icon(Icons.send, color: Colors.white, size: 22),
++            ),
++          ),
++        ),
++      ],
+     );
+   }
++}
+ 
+-  Future<void> _toggleListening() async {
+-    if (_isListening) {
+-      await _speechToText.stop();
+-      setState(() => _isListening = false);
+-
+-      if (_lastWords.isNotEmpty) {
+-        final transcribedText = _lastWords;
+-        _inputController.text = transcribedText;
+-        setState(() => _lastWords = '');
+-
+-        Future.delayed(const Duration(milliseconds: 300), () {
+-          if (mounted && _inputController.text.isNotEmpty) {
+-            _handleSend(isVoice: true);
+-          }
+-        });
+-      }
+-    } else {
+-      final status = await Permission.microphone.request();
+-      if (!status.isGranted) {
+-        if (mounted) {
+-          ScaffoldMessenger.of(context).showSnackBar(
+-            const SnackBar(
+-              content: Text('Permiso de micrófono denegado'),
+-              backgroundColor: Colors.red,
+-              duration: Duration(seconds: 2),
+-            ),
+-          );
+-        }
+-        return;
+-      }
+-
+-      setState(() {
+-        _isListening = true;
+-        _lastWords = '';
+-      });
+-
+-      await _speechToText.listen(
+-        onResult: (result) {
+-          setState(() {
+-            _lastWords = result.recognizedWords;
+-          });
+-        },
+-        listenFor: const Duration(seconds: 30),
+-        pauseFor: const Duration(seconds: 3),
+-        localeId: 'es_MX',
+-      );
+-    }
+-  }
++class _RecordingBar extends StatefulWidget {
++  final VoidCallback onStop;
++  const _RecordingBar({required this.onStop});
+ 
+-  // ✅ MÉTODO CONECTADO AL MICROSERVICIO
+-  void _handleSend({bool isVoice = false}) async {
+-    final text = _inputController.text.trim();
+-    if (text.isEmpty) return;
++  @override
++  State<_RecordingBar> createState() => _RecordingBarState();
++}
+ 
+-    final now = TimeOfDay.now();
+-    final ts = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
++class _RecordingBarState extends State<_RecordingBar> with SingleTickerProviderStateMixin {
++  late final AnimationController _ac;
+ 
+-    setState(() {
+-      _sending = true;
+-      _messages.add(
+-        ChatMessage(
+-          text: text,
+-          isUser: true,
+-          timestamp: ts,
+-          isVoiceMessage: isVoice,
+-        ),
+-      );
+-      _inputController.clear();
+-    });
++  @override
++  void initState() {
++    super.initState();
++    _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 700))
++      ..repeat(reverse: true);
++  }
+ 
+-    _scrollToBottom();
+-    setState(() => _assistantTyping = true);
++  @override
++  void dispose() {
++    _ac.dispose();
++    super.dispose();
++  }
+ 
+-    // ✅ CONECTADO AL MICROSERVICIO
+-    try {
+-      final response = await _assistantService.sendMessage(text);
+-
+-      if (mounted) {
+-        setState(() {
+-          _sending = false;
+-          _assistantTyping = false;
+-          _messages.add(
+-            ChatMessage(
+-              text: response.fullText,
+-              isUser: false,
+-              timestamp: ts,
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      padding: const EdgeInsets.only(left: 18, right: 10, top: 9, bottom: 9),
++      decoration: BoxDecoration(
++        color: Colors.white,
++        border: Border.all(color: const Color(0xFFF1D2CE), width: 1.5),
++        borderRadius: BorderRadius.circular(26),
++        boxShadow: const [
++          BoxShadow(
++            color: Color(0x14000000),
++            blurRadius: 16,
++            offset: Offset(0, 6),
++            spreadRadius: -10,
++          ),
++        ],
++      ),
++      child: Row(
++        children: [
++          Container(
++            width: 9,
++            height: 9,
++            decoration: const BoxDecoration(
++              color: BovaraColors.danger,
++              shape: BoxShape.circle,
+             ),
+-          );
+-        });
+-        _scrollToBottom();
+-      }
+-    } catch (e) {
+-      print('❌ Error al enviar mensaje: $e');
+-
+-      if (mounted) {
+-        setState(() {
+-          _sending = false;
+-          _assistantTyping = false;
+-          _messages.add(
+-            ChatMessage(
+-              text: 'Lo siento, hubo un error al conectar con el asistente. Verifica tu conexión e intenta de nuevo.',
+-              isUser: false,
+-              timestamp: ts,
++          ),
++          const SizedBox(width: 11),
++          Text('Escuchando…',
++              style: BovaraText.label(size: 13, color: BovaraColors.textPrimary)),
++          const SizedBox(width: 12),
++          Expanded(
++            child: AnimatedBuilder(
++              animation: _ac,
++              builder: (context, _) {
++                return Row(
++                  mainAxisAlignment: MainAxisAlignment.center,
++                  children: List.generate(9, (i) {
++                    final heights = [9.0, 17.0, 12.0, 22.0, 14.0, 20.0, 10.0, 16.0, 9.0];
++                    final phase = (i * 0.11) % 1.0;
++                    final t = ((_ac.value + phase) % 1.0);
++                    final scale = 0.5 + 0.5 * (t < 0.5 ? t * 2 : (1 - t) * 2);
++                    return Padding(
++                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
++                      child: Container(
++                        width: 3,
++                        height: heights[i] * scale,
++                        decoration: BoxDecoration(
++                          color: BovaraColors.primary,
++                          borderRadius: BorderRadius.circular(2),
++                        ),
++                      ),
++                    );
++                  }),
++                );
++              },
+             ),
+-          );
+-        });
+-
+-        ScaffoldMessenger.of(context).showSnackBar(
+-          SnackBar(
+-            content: Text('Error: ${e.toString()}'),
+-            backgroundColor: Colors.red,
+-            duration: const Duration(seconds: 3),
+           ),
+-        );
+-      }
+-    }
+-  }
+-
+-  void _scrollToBottom() {
+-    WidgetsBinding.instance.addPostFrameCallback((_) {
+-      if (!_scrollController.hasClients) return;
+-      _scrollController.animateTo(
+-        _scrollController.position.maxScrollExtent + 100,
+-        duration: const Duration(milliseconds: 300),
+-        curve: Curves.easeOut,
+-      );
+-    });
++          Material(
++            color: Colors.transparent,
++            child: InkWell(
++              onTap: widget.onStop,
++              customBorder: const CircleBorder(),
++              child: Container(
++                width: 46,
++                height: 46,
++                decoration: const BoxDecoration(
++                  color: BovaraColors.danger,
++                  shape: BoxShape.circle,
++                ),
++                child: const Center(
++                  child: SizedBox(
++                    width: 14,
++                    height: 14,
++                    child: DecoratedBox(
++                      decoration: BoxDecoration(
++                        color: Colors.white,
++                        borderRadius: BorderRadius.all(Radius.circular(3)),
++                      ),
++                    ),
++                  ),
++                ),
++              ),
++            ),
++          ),
++        ],
++      ),
++    );
+   }
+ }
+-
+-// ========== MODELOS ==========
+-class ChatMessage {
+-  final String text;
+-  final bool isUser;
+-  final String timestamp;
+-  final bool isVoiceMessage;
+-
+-  ChatMessage({
+-    required this.text,
+-    required this.isUser,
+-    required this.timestamp,
+-    this.isVoiceMessage = false,
+-  });
+-}

@@ -1,0 +1,561 @@
+diff --git a/lib/core/application/app_state_repository.dart b/lib/core/application/app_state_repository.dart
+index 4ef630c..1f06cdf 100644
+--- a/lib/core/application/app_state_repository.dart
++++ b/lib/core/application/app_state_repository.dart
+@@ -1,7 +1,11 @@
+ import 'package:flutter/material.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++
++import '../services/token_storage.dart';
+ 
+ class AppStateRepository extends ChangeNotifier {
+   bool _isLoggedIn = false;
++  bool _hasLoadedFromDisk = false;
+   String? _currentUserEmail;
+ 
+   // Datos de perfil
+@@ -11,9 +15,11 @@ class AppStateRepository extends ChangeNotifier {
+   String? _userPhone;
+   String? _userEmail;
+ 
++  final _tokenStorage = TokenStorage();
+ 
+   // Getters
+   bool get isLoggedIn => _isLoggedIn;
++  bool get hasLoadedFromDisk => _hasLoadedFromDisk;
+ 
+   String? get currentUserEmail => _currentUserEmail;
+ 
+@@ -38,6 +44,28 @@ class AppStateRepository extends ChangeNotifier {
+               .first ??
+           'Ganadero';
+ 
++  /// Restaura el estado desde disco. Llamar UNA VEZ al arrancar la app
++  /// (desde AuthGate). Considera "logueado" si existe un token JWT vivo
++  /// en FlutterSecureStorage.
++  Future<void> loadFromDisk() async {
++    if (_hasLoadedFromDisk) return;
++
++    // Token JWT (fuente de verdad de la sesión)
++    _isLoggedIn = await _tokenStorage.hasToken();
++
++    // Datos de perfil (opcionales, cachear para mostrar de una)
++    final prefs = await SharedPreferences.getInstance();
++    _userName = prefs.getString('user_name');
++    _userRole = prefs.getString('user_role');
++    _ranchName = prefs.getString('ranch_name');
++    _userPhone = prefs.getString('user_phone');
++    _userEmail = prefs.getString('user_email');
++    _currentUserEmail = _userEmail;
++
++    _hasLoadedFromDisk = true;
++    notifyListeners();
++  }
++
+   // Login / logout
+   void setLoggedIn(bool value, {String? email}) {
+     _isLoggedIn = value;
+@@ -45,10 +73,23 @@ class AppStateRepository extends ChangeNotifier {
+       _currentUserEmail = email;
+       _userEmail ??= email; // si no había email de perfil, lo sincronizamos
+     }
++    _persistProfile();
++    notifyListeners();
++  }
++
++  /// Borra sesión y todo el perfil (para cerrar sesión).
++  Future<void> logout() async {
++    _isLoggedIn = false;
++    _currentUserEmail = null;
++    _userName = null;
++    _userRole = null;
++    _ranchName = null;
++    _userPhone = null;
++    _userEmail = null;
++    await _tokenStorage.clearAll(); // borra JWT + prefs
+     notifyListeners();
+   }
+ 
+-  // Actualizar datos de perfil
+   // Actualizar datos de perfil
+   void updateProfile({
+     String? name,
+@@ -57,18 +98,25 @@ class AppStateRepository extends ChangeNotifier {
+     String? phone,
+     String? email,
+   }) {
+-    // ✅ CAMBIAR: Solo validar isNotEmpty si no es null
+     if (name != null && name.isNotEmpty) _userName = name;
+     if (role != null && role.isNotEmpty) _userRole = role;
+     if (ranch != null && ranch.isNotEmpty) _ranchName = ranch;
+-
+-    // ✅ SOLUCIÓN: Permitir null sin validar isEmpty
+-    _userPhone = phone; // Acepta null directamente
+-
++    _userPhone = phone;
+     if (email != null && email.isNotEmpty) {
+       _userEmail = email;
+       _currentUserEmail = email;
+     }
++    _persistProfile();
+     notifyListeners();
+   }
++
++  /// Guarda el perfil en SharedPreferences para restaurarlo al reabrir.
++  Future<void> _persistProfile() async {
++    final prefs = await SharedPreferences.getInstance();
++    if (_userName != null) await prefs.setString('user_name', _userName!);
++    if (_userRole != null) await prefs.setString('user_role', _userRole!);
++    if (_ranchName != null) await prefs.setString('ranch_name', _ranchName!);
++    if (_userPhone != null) await prefs.setString('user_phone', _userPhone!);
++    if (_userEmail != null) await prefs.setString('user_email', _userEmail!);
++  }
+ }
+diff --git a/lib/core/router/app_router.dart b/lib/core/router/app_router.dart
+index a0046f0..a733ad4 100644
+--- a/lib/core/router/app_router.dart
++++ b/lib/core/router/app_router.dart
+@@ -1,6 +1,7 @@
+ import 'package:go_router/go_router.dart';
+ 
+ // OJO con los paths: estamos dentro de lib/core/router/
++import '../../features/auth/presentation/pages/auth_gate.dart';
+ import '../../features/onboarding/presentation/pages/onboarding_page.dart';
+ import '../../features/auth/presentation/pages/welcome_page.dart';
+ import '../../features/auth/presentation/pages/login_page.dart';
+@@ -18,9 +19,13 @@ import '../../features/cattle/presentation/pages/cattle_vaccine_page.dart';
+ import '../../features/cattle/data/models/cattle_model.dart';
+ 
+ final appRouter = GoRouter(
+-  initialLocation: '/onboarding',
++  initialLocation: '/splash',
+ 
+   routes: [
++    GoRoute(
++      path: '/splash',
++      builder: (context, state) => const AuthGate(),
++    ),
+     GoRoute(
+       path: '/onboarding',
+       builder: (context, state) => const OnboardingPage(),
+diff --git a/lib/features/auth/presentation/pages/auth_gate.dart b/lib/features/auth/presentation/pages/auth_gate.dart
+new file mode 100644
+index 0000000..81884cb
+--- /dev/null
++++ b/lib/features/auth/presentation/pages/auth_gate.dart
+@@ -0,0 +1,155 @@
++// lib/features/auth/presentation/pages/auth_gate.dart
++//
++// Pantalla splash mínima que decide adónde mandar al usuario al arrancar:
++//
++//   1. Si NUNCA ha visto el onboarding (SharedPreferences 'onboarding_seen'
++//      == false) → /onboarding.
++//   2. Si ya lo vio pero no tiene sesión (no hay token JWT en storage) →
++//      /welcome.
++//   3. Si tiene sesión (hay token) → /home.
++//
++// Se muestra en /splash como initialLocation del router. Cuando termina
++// de decidir, hace context.go(...) hacia la ruta correspondiente. Muestra
++// el logo grande mientras lo hace (usualmente <100ms).
++
++import 'package:flutter/material.dart';
++import 'package:go_router/go_router.dart';
++import 'package:provider/provider.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++
++import '../../../../core/application/app_state_repository.dart';
++import '../../../../core/theme/theme.dart';
++
++class AuthGate extends StatefulWidget {
++  const AuthGate({super.key});
++
++  @override
++  State<AuthGate> createState() => _AuthGateState();
++}
++
++class _AuthGateState extends State<AuthGate> {
++  @override
++  void initState() {
++    super.initState();
++    // WidgetsBinding para que el go() ocurra después del primer frame.
++    WidgetsBinding.instance.addPostFrameCallback((_) => _decideRoute());
++  }
++
++  Future<void> _decideRoute() async {
++    // 1. Restaurar sesión desde disco (JWT + perfil).
++    final appState = context.read<AppStateRepository>();
++    await appState.loadFromDisk();
++
++    // 2. Chequear si ya vio el onboarding.
++    final prefs = await SharedPreferences.getInstance();
++    final onboardingSeen = prefs.getBool('onboarding_seen') ?? false;
++
++    if (!mounted) return;
++
++    if (appState.isLoggedIn) {
++      context.go('/home');
++    } else if (!onboardingSeen) {
++      context.go('/onboarding');
++    } else {
++      context.go('/welcome');
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    return Scaffold(
++      backgroundColor: BovaraColors.background,
++      body: Center(
++        child: Column(
++          mainAxisAlignment: MainAxisAlignment.center,
++          children: [
++            _SplashLogo(),
++            const SizedBox(height: 24),
++            Text('Bovara',
++                style: BovaraText.logo(size: 32, color: BovaraColors.textOnDark)),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++class _SplashLogo extends StatelessWidget {
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      width: 84,
++      height: 84,
++      decoration: BoxDecoration(
++        gradient: const LinearGradient(
++          begin: Alignment.topRight,
++          end: Alignment.bottomLeft,
++          colors: BovaraColors.primaryGradient,
++        ),
++        borderRadius: BorderRadius.circular(26),
++        boxShadow: [
++          BoxShadow(
++            color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
++            blurRadius: 40,
++            offset: const Offset(0, 20),
++            spreadRadius: -14,
++          ),
++        ],
++      ),
++      child: Center(
++        child: SizedBox(
++          width: 48,
++          height: 36,
++          child: Stack(
++            children: [
++              Positioned.fill(
++                child: Container(
++                  decoration: BoxDecoration(
++                    color: const Color(0xFFF4EDE0),
++                    borderRadius: BorderRadius.circular(80),
++                  ),
++                ),
++              ),
++              Positioned(
++                left: 12,
++                top: 11,
++                child: Container(
++                  width: 5,
++                  height: 5,
++                  decoration: const BoxDecoration(
++                    color: Color(0xFF2B2018),
++                    shape: BoxShape.circle,
++                  ),
++                ),
++              ),
++              Positioned(
++                right: 12,
++                top: 11,
++                child: Container(
++                  width: 5,
++                  height: 5,
++                  decoration: const BoxDecoration(
++                    color: Color(0xFF2B2018),
++                    shape: BoxShape.circle,
++                  ),
++                ),
++              ),
++              Positioned(
++                bottom: 2,
++                left: 14,
++                child: Container(
++                  width: 20,
++                  height: 12,
++                  decoration: BoxDecoration(
++                    color: const Color(0xFFE9B7A6),
++                    borderRadius: BorderRadius.circular(14),
++                  ),
++                ),
++              ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
+diff --git a/lib/features/onboarding/presentation/pages/onboarding_page.dart b/lib/features/onboarding/presentation/pages/onboarding_page.dart
+index 3044ccc..2da5e2d 100644
+--- a/lib/features/onboarding/presentation/pages/onboarding_page.dart
++++ b/lib/features/onboarding/presentation/pages/onboarding_page.dart
+@@ -12,13 +12,13 @@
+ 
+ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
++import 'package:shared_preferences/shared_preferences.dart';
+ 
+ import '../../../../core/theme/theme.dart';
+ import '../../../../core/widgets/bovara_buttons.dart';
+ import '../../../../core/widgets/bovara_chips.dart';
+ import '../../../../core/widgets/bovara_logo.dart';
+ import '../../../../core/widgets/bovara_page_dots.dart';
+-import '../../../../core/widgets/bovara_status_bar.dart';
+ 
+ class OnboardingPage extends StatefulWidget {
+   const OnboardingPage({super.key});
+@@ -30,6 +30,7 @@ class OnboardingPage extends StatefulWidget {
+ class _OnboardingPageState extends State<OnboardingPage> {
+   final _pageController = PageController();
+   int _current = 0;
++  bool _preloaded = false;
+ 
+   static const _slides = <_SlideData>[
+     _SlideData(
+@@ -38,7 +39,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
+       subtitle:
+           'Registra pesajes, partos y celos en 2 minutos. Bovara ordena todo por ti y lo mantiene seguro.',
+       image: 'assets/images/presentation1.jpg',
+-      imageAlignment: Alignment(0, -0.3), // object-position: center 35%
++      imageAlignment: Alignment(0, -0.3),
+     ),
+     _SlideData(
+       chip: 'Diseñado para el campo',
+@@ -54,18 +55,33 @@ class _OnboardingPageState extends State<OnboardingPage> {
+       subtitle:
+           'La IA predice celos, alertas de salud y tareas. No pierdas un solo día de reproducción.',
+       image: 'assets/images/presentation4.jpg',
+-      imageAlignment: Alignment(0, -0.2), // object-position: center 40%
++      imageAlignment: Alignment(0, -0.2),
+     ),
+     _SlideData(
+       chip: 'Tu copiloto de campo',
+       title: 'Conoce a Bovi,\ntu asistente',
+       subtitle:
+           'Pregúntale por voz o texto sobre celos, vacunas y tareas. Te responde al instante, aunque estés sin señal.',
+-      image: null, // slide oscuro con avatar (grupo D del prototipo)
++      image: null,
+       imageAlignment: Alignment.center,
+     ),
+   ];
+ 
++  @override
++  void didChangeDependencies() {
++    super.didChangeDependencies();
++    // Precachear TODAS las imágenes al primer build para que al deslizar
++    // ya estén decodificadas y no haya "salto" al aparecer.
++    if (!_preloaded) {
++      for (final s in _slides) {
++        if (s.image != null) {
++          precacheImage(AssetImage(s.image!), context);
++        }
++      }
++      _preloaded = true;
++    }
++  }
++
+   @override
+   void dispose() {
+     _pageController.dispose();
+@@ -77,7 +93,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
+       _finish();
+     } else {
+       _pageController.nextPage(
+-        duration: const Duration(milliseconds: 550),
++        duration: const Duration(milliseconds: 280),
+         curve: Curves.easeOutCubic,
+       );
+     }
+@@ -86,46 +102,56 @@ class _OnboardingPageState extends State<OnboardingPage> {
+   void _skip() {
+     _pageController.animateToPage(
+       _slides.length - 1,
+-      duration: const Duration(milliseconds: 550),
++      duration: const Duration(milliseconds: 280),
+       curve: Curves.easeOutCubic,
+     );
+   }
+ 
+-  void _finish() => context.go('/welcome');
++  Future<void> _finish() async {
++    // Marca que el onboarding ya fue visto para que no vuelva a aparecer.
++    final prefs = await SharedPreferences.getInstance();
++    await prefs.setBool('onboarding_seen', true);
++    if (!mounted) return;
++    context.go('/welcome');
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+       backgroundColor: BovaraColors.background,
+-      body: SafeArea(
+-        top: false,
+-        bottom: false,
+-        child: Column(
+-          children: [
+-            Expanded(
+-              child: PageView.builder(
+-                controller: _pageController,
+-                itemCount: _slides.length,
+-                onPageChanged: (i) => setState(() => _current = i),
+-                itemBuilder: (context, i) => _OnboardingSlide(
+-                  data: _slides[i],
+-                  onSkip: _skip,
+-                ),
+-              ),
++      // extendBody: true permite que el contenido pase por debajo de los
++      // controles inferiores translúcidos.
++      extendBody: true,
++      body: Stack(
++        children: [
++          // Slides ocupan TODA la pantalla (fotos hasta abajo)
++          PageView.builder(
++            controller: _pageController,
++            itemCount: _slides.length,
++            onPageChanged: (i) => setState(() => _current = i),
++            itemBuilder: (context, i) => _OnboardingSlide(
++              data: _slides[i],
++              onSkip: _skip,
+             ),
+-            _BottomControls(
++          ),
++          // Controles inferiores flotando encima
++          Positioned(
++            left: 0,
++            right: 0,
++            bottom: 0,
++            child: _BottomControls(
+               count: _slides.length,
+               current: _current,
+               onDotTap: (i) => _pageController.animateToPage(
+                 i,
+-                duration: const Duration(milliseconds: 550),
++                duration: const Duration(milliseconds: 320),
+                 curve: Curves.easeOutCubic,
+               ),
+               onNext: _next,
+               isLast: _current == _slides.length - 1,
+             ),
+-          ],
+-        ),
++          ),
++        ],
+       ),
+     );
+   }
+@@ -190,11 +216,11 @@ class _OnboardingSlide extends StatelessWidget {
+         // Contenido superpuesto
+         SafeArea(
+           child: Padding(
+-            padding: const EdgeInsets.symmetric(horizontal: 22),
++            padding: const EdgeInsets.symmetric(horizontal: 24),
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+-                const BovaraStatusBar(),
++                const SizedBox(height: 8),
+                 // Header: logo + botón skip
+                 Row(
+                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+@@ -204,7 +230,7 @@ class _OnboardingSlide extends StatelessWidget {
+                   ],
+                 ),
+                 const Spacer(),
+-                // Chip + título + subtítulo (fondo, con margen inferior)
++                // Chip + título + subtítulo alineados a la izquierda
+                 GlassChip(
+                   label: data.chip,
+                   dotColor: BovaraColors.primary,
+@@ -213,27 +239,29 @@ class _OnboardingSlide extends StatelessWidget {
+                 Text(
+                   data.title,
+                   style: BovaraText.display().copyWith(
++                    fontSize: 30,
++                    height: 1.1,
+                     shadows: const [
+-                      Shadow(color: Color(0x66000000), blurRadius: 20, offset: Offset(0, 2)),
++                      Shadow(color: Color(0x99000000), blurRadius: 24, offset: Offset(0, 2)),
+                     ],
+                   ),
+                 ),
+                 const SizedBox(height: BovaraSpace.md),
+-                ConstrainedBox(
+-                  constraints: const BoxConstraints(maxWidth: 300),
+-                  child: Text(
+-                    data.subtitle,
+-                    style: BovaraText.body(
+-                      size: 13.5,
+-                      color: Colors.white.withValues(alpha: 0.85),
+-                    ).copyWith(
+-                      shadows: const [
+-                        Shadow(color: Color(0x59000000), blurRadius: 12, offset: Offset(0, 1)),
+-                      ],
+-                    ),
++                Text(
++                  data.subtitle,
++                  style: BovaraText.body(
++                    size: 14,
++                    color: Colors.white.withValues(alpha: 0.88),
++                  ).copyWith(
++                    height: 1.5,
++                    shadows: const [
++                      Shadow(color: Color(0x99000000), blurRadius: 16, offset: Offset(0, 1)),
++                    ],
+                   ),
+                 ),
+-                const SizedBox(height: 170), // espacio para los controles fijos abajo
++                // Espacio para que el bloque de controles inferiores no
++                // tape el texto. ~180 = altura aprox del bloque translúcido.
++                const SizedBox(height: 180),
+               ],
+             ),
+           ),
+@@ -291,9 +319,22 @@ class _BottomControls extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
++    // Bloque translúcido con gradient hacia negro para que la foto de
++    // fondo se vea COMPLETA hasta abajo, incluso detrás del botón.
+     return Container(
+-      color: BovaraColors.background,
+-      padding: const EdgeInsets.fromLTRB(28, 14, 28, 30),
++      decoration: const BoxDecoration(
++        gradient: LinearGradient(
++          begin: Alignment.topCenter,
++          end: Alignment.bottomCenter,
++          colors: [
++            Color(0x00000000),
++            Color(0xB3000000),
++            Color(0xE6000000),
++          ],
++          stops: [0.0, 0.4, 1.0],
++        ),
++      ),
++      padding: const EdgeInsets.fromLTRB(28, 30, 28, 20),
+       child: Column(
+         mainAxisSize: MainAxisSize.min,
+         children: [
+@@ -303,8 +344,6 @@ class _BottomControls extends StatelessWidget {
+             onTap: onDotTap,
+           ),
+           const SizedBox(height: BovaraSpace.lg),
+-          // El botón del prototipo es CREMA (#F4F4EE) con texto oscuro, no verde.
+-          // Ver bloque final del slide en el HTML.
+           _OnboardingCTA(label: isLast ? 'Comenzar' : 'Siguiente', onTap: onNext),
+           SizedBox(height: MediaQuery.of(context).padding.bottom),
+         ],

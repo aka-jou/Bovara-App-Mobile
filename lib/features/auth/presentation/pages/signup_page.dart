@@ -1,8 +1,22 @@
+// lib/features/auth/presentation/pages/signup_page.dart
+//
+// Crear cuenta (Grupo B — Sign up del prototipo).
+// AppBar limpio con botón atrás + "Crear cuenta" + subtítulo "Paso 1 de 2".
+// Campos: nombre completo, rol, nombre del rancho, teléfono, correo (opcional),
+//         contraseña. Checkbox de términos, botón "Continuar" al fondo.
+//
+// La LÓGICA de _authService.register() y AppStateRepository se preserva.
+
 import 'package:flutter/material.dart';
+import '../../../../core/services/notification_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+
 import '../../../../core/application/app_state_repository.dart';
 import '../../../../core/services/auth_service.dart';
+import '../../../../core/theme/theme.dart';
+import '../../../../core/widgets/bovara_buttons.dart';
+import '../../../../core/widgets/bovara_text_field.dart';
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -18,15 +32,18 @@ class _SignUpPageState extends State<SignUpPage> {
   final _telefonoController = TextEditingController();
   final _correoController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
 
   final _authService = AuthService();
   bool _isLoading = false;
 
-  String? _selectedRole;
-  bool _acceptTerms = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
+  static const _roles = <String>[
+    'Propietario',
+    'Encargado',
+    'Trabajador',
+    'Veterinario',
+  ];
+  String _selectedRole = _roles.first;
+  bool _acceptTerms = true;
 
   @override
   void dispose() {
@@ -35,68 +52,26 @@ class _SignUpPageState extends State<SignUpPage> {
     _telefonoController.dispose();
     _correoController.dispose();
     _passwordController.dispose();
-    _confirmPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _handleSignUp() async {
-    // 1) Validar formulario
     if (!_formKey.currentState!.validate()) return;
 
-    // 2) Validar términos
     if (!_acceptTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Debes aceptar los términos y condiciones'),
-        ),
-      );
+      _showError('Debes aceptar los términos y condiciones');
       return;
     }
 
-    // 3) Validar contraseñas
-    if (_passwordController.text != _confirmPasswordController.text) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Las contraseñas no coinciden'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (_passwordController.text.length < 8) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('La contraseña debe tener al menos 8 caracteres'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // 4) Validar email
     final email = _correoController.text.trim();
     if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El correo electrónico es requerido'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showError('El correo electrónico es requerido');
       return;
     }
 
-    // 5) Llamar al backend
     setState(() => _isLoading = true);
 
     try {
-      print('🚀 Iniciando registro...');
-      print('👤 Nombre: ${_nombreController.text.trim()}');
-      print('📧 Email: $email');
-      print('📱 Teléfono: ${_telefonoController.text.trim()}');
-      print('🏠 Rancho: ${_ranchoController.text.trim()}');
-
-      // Registrar en el backend (CON TELÉFONO)
       final authResponse = await _authService.register(
         email: email,
         password: _passwordController.text,
@@ -106,13 +81,9 @@ class _SignUpPageState extends State<SignUpPage> {
             : null,
       );
 
-      print('✅ Registro exitoso: $authResponse');
-
       if (!mounted) return;
 
-      // 6) Guardar en AppStateRepository (estado local)
       final appState = context.read<AppStateRepository>();
-
       appState.updateProfile(
         name: _nombreController.text.trim(),
         role: _selectedRole,
@@ -120,451 +91,338 @@ class _SignUpPageState extends State<SignUpPage> {
         phone: _telefonoController.text.trim(),
         email: email,
       );
-
       appState.setLoggedIn(true, email: email);
-
-      // 7) Mostrar éxito y navegar
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('¡Cuenta creada exitosamente!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      // Navegar a cattle-list
-      context.go('/home');
-
-    } catch (e) {
-      print('❌ Error en registro: $e');
-
-      if (!mounted) return;
+      NotificationService().registerToken();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
-          backgroundColor: Colors.red,
+          content: const Text('¡Cuenta creada exitosamente!'),
+          backgroundColor: BovaraColors.primary,
         ),
       );
+    debugPrint('Registro exitoso: $authResponse');
+
+    if (!mounted) return;
+
+
+      context.go('/home');
+    } catch (e) {
+      if (!mounted) return;
+      _showError(e.toString().replaceAll('Exception: ', ''));
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: BovaraColors.danger),
+    );
+  }
+
+  Future<void> _pickRole() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: BovaraColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(BovaraRadius.xxl)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: BovaraColors.border,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                children: [
+                  Text('Rol en el rancho',
+                      style: BovaraText.heading(color: BovaraColors.textPrimary)),
+                ],
+              ),
+            ),
+            for (final r in _roles)
+              ListTile(
+                title: Text(r,
+                    style: BovaraText.body(size: 15, color: BovaraColors.textPrimary)),
+                trailing: r == _selectedRole
+                    ? const Icon(Icons.check, color: BovaraColors.primary)
+                    : null,
+                onTap: () => Navigator.pop(ctx, r),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (choice != null) setState(() => _selectedRole = choice);
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: BovaraColors.surface,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0),
+        child: Form(
+          key: _formKey,
           child: Column(
             children: [
-              const SizedBox(height: 32),
-              // Logo circular
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: colorScheme.primary,
-                  shape: BoxShape.circle,
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.agriculture,
-                    color: Colors.white,
-                    size: 40,
+              _Header(onBack: () => context.go('/welcome')),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(26, 6, 26, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      BovaraTextField(
+                        label: 'Nombre completo',
+                        hint: 'Ej: Carlos Pérez García',
+                        controller: _nombreController,
+                        validator: (v) => (v == null || v.trim().length < 3)
+                            ? 'Ingresa tu nombre completo'
+                            : null,
+                      ),
+                      const SizedBox(height: 15),
+                      _RolePicker(role: _selectedRole, onTap: _pickRole),
+                      const SizedBox(height: 15),
+                      BovaraTextField(
+                        label: 'Nombre del rancho',
+                        hint: 'Ej: Rancho La Esperanza',
+                        controller: _ranchoController,
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Ingresa el nombre del rancho'
+                            : null,
+                      ),
+                      const SizedBox(height: 15),
+                      BovaraTextField(
+                        label: 'Teléfono',
+                        hint: '333 123 4567',
+                        controller: _telefonoController,
+                        keyboardType: TextInputType.phone,
+                      ),
+                      const SizedBox(height: 15),
+                      BovaraTextField(
+                        label: 'Correo',
+                        hint: 'carlos@correo.com',
+                        controller: _correoController,
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Ingresa tu correo';
+                          if (!v.contains('@')) return 'Correo no válido';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 15),
+                      BovaraTextField(
+                        label: 'Contraseña',
+                        hint: 'Mínimo 6 caracteres',
+                        controller: _passwordController,
+                        obscureText: true,
+                        canToggleObscure: true,
+                        validator: (v) => (v == null || v.length < 6)
+                            ? 'Mínimo 6 caracteres'
+                            : null,
+                      ),
+                      const SizedBox(height: 14),
+                      _TermsCheckbox(
+                        checked: _acceptTerms,
+                        onChanged: (v) => setState(() => _acceptTerms = v),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
-
-              // Tarjeta principal
+              // Footer con botón continuar
               Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 15,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
+                decoration: const BoxDecoration(
+                  color: BovaraColors.surface,
+                  border: Border(top: BorderSide(color: Color(0xFFEFF0EA))),
                 ),
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header con logo y título
-                    Row(
-                      children: [
-                        Icon(Icons.eco, color: colorScheme.primary),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Bovara',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF222222),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-
-                    const Text(
-                      'Crear cuenta en Bovara',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF222222),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Organiza los datos de tu rancho y deja de depender de libretas y WhatsApp.',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Color(0xFF616161),
-                        height: 1.6,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-
-                    // Formulario
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildTextField(
-                            label: 'Nombre completo',
-                            controller: _nombreController,
-                            hint: 'Ej: Juan Pérez García',
-                          ),
-                          const SizedBox(height: 20),
-                          _buildDropdownField(
-                            label: 'Rol principal en el rancho',
-                          ),
-                          const SizedBox(height: 20),
-                          _buildTextField(
-                            label: 'Nombre del rancho',
-                            controller: _ranchoController,
-                            hint: 'Ej: Rancho El Mezquite',
-                          ),
-                          const SizedBox(height: 20),
-                          _buildTextField(
-                            label: 'Teléfono de contacto',
-                            controller: _telefonoController,
-                            hint: 'Ej: 3331234567',
-                            keyboardType: TextInputType.phone,
-                          ),
-                          const SizedBox(height: 20),
-                          _buildTextField(
-                            label: 'Correo electrónico',
-                            controller: _correoController,
-                            hint: 'Ej: juan@correo.com',
-                            keyboardType: TextInputType.emailAddress,
-                            optional: false,
-                          ),
-                          const SizedBox(height: 20),
-                          _buildPasswordField(
-                            label: 'Contraseña',
-                            controller: _passwordController,
-                            hint: 'Mínimo 8 caracteres',
-                            obscure: _obscurePassword,
-                            onToggle: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                          const SizedBox(height: 20),
-                          _buildPasswordField(
-                            label: 'Confirmar contraseña',
-                            controller: _confirmPasswordController,
-                            hint: 'Repite tu contraseña',
-                            obscure: _obscureConfirmPassword,
-                            onToggle: () {
-                              setState(() {
-                                _obscureConfirmPassword = !_obscureConfirmPassword;
-                              });
-                            },
-                          ),
-                          const SizedBox(height: 20),
-
-                          // Términos y condiciones
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                margin: const EdgeInsets.only(top: 2),
-                                width: 20,
-                                height: 20,
-                                child: Checkbox(
-                                  value: _acceptTerms,
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _acceptTerms = value ?? false;
-                                    });
-                                  },
-                                  side: const BorderSide(
-                                    color: Color(0xFF000000),
-                                    width: 1,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              const Expanded(
-                                child: Text(
-                                  'Acepto los términos y condiciones de uso de Bovara',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Color(0xFF222222),
-                                    height: 1.6,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          // Botón crear cuenta
-                          SizedBox(
-                            width: double.infinity,
-                            height: 56,
-                            child: ElevatedButton(
-                              onPressed: _isLoading ? null : _handleSignUp,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF2E7D32),
-                                disabledBackgroundColor: const Color(0xFF2E7D32).withOpacity(0.6),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 2,
-                              ),
-                              child: _isLoading
-                                  ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                                  : const Text(
-                                'Crear cuenta',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 16),
-
-                          // Link iniciar sesión
-                          Center(
-                            child: TextButton(
-                              onPressed: () {
-                                context.go('/login');
-                              },
-                              child: const Text(
-                                'Ya tengo cuenta, iniciar sesión',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Color(0xFF8D6E63),
-                                  decoration: TextDecoration.underline,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(26, 14, 26, 30),
+                child: PrimaryButton(
+                  label: 'Continuar',
+                  onPressed: _isLoading ? null : _handleSignUp,
+                  isLoading: _isLoading,
+                  height: 54,
                 ),
               ),
-              const SizedBox(height: 32),
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildTextField({
-    required String label,
-    required TextEditingController controller,
-    required String hint,
-    TextInputType? keyboardType,
-    bool optional = false,
-  }) {
+// ─────────────────────────────────────────────────
+// Sub-widgets
+// ─────────────────────────────────────────────────
+
+class _Header extends StatelessWidget {
+  final VoidCallback onBack;
+  const _Header({required this.onBack});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(26, 12, 26, 16),
+      child: Row(
+        children: [
+          // Botón atrás cuadrado
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(BovaraRadius.sm),
+            child: InkWell(
+              onTap: onBack,
+              borderRadius: BorderRadius.circular(BovaraRadius.sm),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  border: Border.all(color: BovaraColors.border, width: 1.5),
+                  borderRadius: BorderRadius.circular(BovaraRadius.sm),
+                ),
+                child: const Icon(Icons.arrow_back_ios_new,
+                    size: 14, color: BovaraColors.textPrimary),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Crear cuenta',
+                  style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Paso 1 de 2 · Datos del rancho',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RolePicker extends StatelessWidget {
+  final String role;
+  final VoidCallback onTap;
+  const _RolePicker({required this.role, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF222222),
+        Text('Rol en el rancho',
+            style: BovaraText.label(size: 13, color: BovaraColors.textPrimary)),
+        const SizedBox(height: 7),
+        Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+              decoration: BoxDecoration(
+                border: Border.all(color: BovaraColors.border, width: 1.5),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      role,
+                      style: BovaraText.label(
+                        size: 14.5,
+                        color: BovaraColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.keyboard_arrow_down,
+                      size: 20, color: BovaraColors.textMuted),
+                ],
               ),
             ),
-            if (optional) ...[
-              const SizedBox(width: 4),
-              const Text(
-                '(Opcional)',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF616161),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TermsCheckbox extends StatelessWidget {
+  final bool checked;
+  final ValueChanged<bool> onChanged;
+  const _TermsCheckbox({required this.checked, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!checked),
+      borderRadius: BorderRadius.circular(BovaraRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: checked ? BovaraColors.primary : Colors.transparent,
+                border: checked
+                    ? null
+                    : Border.all(color: BovaraColors.border, width: 1.5),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: checked
+                  ? const Icon(Icons.check, size: 14, color: Colors.white)
+                  : null,
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: BovaraText.body(
+                    size: 12.5,
+                    color: BovaraColors.textSecondary,
+                  ).copyWith(fontWeight: FontWeight.w500, height: 1.45),
+                  children: [
+                    const TextSpan(text: 'Acepto los '),
+                    TextSpan(
+                      text: 'términos y condiciones',
+                      style: BovaraText.label(size: 12.5, color: BovaraColors.primary),
+                    ),
+                    const TextSpan(text: ' y la política de privacidad de Bovara.'),
+                  ],
                 ),
               ),
-            ],
+            ),
           ],
         ),
-        const SizedBox(height: 8),
-        Container(
-          height: 56,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD1D5DB)),
-          ),
-          child: TextField(
-            controller: controller,
-            keyboardType: keyboardType,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: const TextStyle(
-                color: Color(0xFFADAEBC),
-                fontSize: 16,
-              ),
-              border: InputBorder.none,
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDropdownField({required String label}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF222222),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 56,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD1D5DB)),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: _selectedRole,
-              isExpanded: true,
-              hint: const Text(
-                'Selecciona tu rol',
-                style: TextStyle(
-                  color: Color(0xFF222222),
-                  fontSize: 16,
-                ),
-              ),
-              icon: const Icon(
-                Icons.keyboard_arrow_down,
-                color: Color(0xFF222222),
-              ),
-              items: ['Dueño', 'Administrador', 'Vaquero', 'Otro']
-                  .map((String value) {
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(value),
-                );
-              }).toList(),
-              onChanged: (String? newValue) {
-                setState(() {
-                  _selectedRole = newValue;
-                });
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPasswordField({
-    required String label,
-    required TextEditingController controller,
-    required String hint,
-    required bool obscure,
-    required VoidCallback onToggle,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF222222),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 56,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD1D5DB)),
-          ),
-          child: TextField(
-            controller: controller,
-            obscureText: obscure,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: const TextStyle(
-                color: Color(0xFFADAEBC),
-                fontSize: 16,
-              ),
-              border: InputBorder.none,
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  obscure ? Icons.visibility_off : Icons.visibility,
-                  color: const Color(0xFF616161),
-                  size: 20,
-                ),
-                onPressed: onToggle,
-              ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

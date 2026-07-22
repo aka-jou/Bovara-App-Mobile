@@ -1,505 +1,452 @@
-// lib/features/dashboard/presentation/pages/dashboard_page.dart
+// lib/features/home/presentation/pages/dashboard_page.dart
+//
+// Dashboard / Inicio (Grupo C del rediseño).
+//
+// Estructura:
+//   - Saludo con nombre + avatar CP + campana con badge de notificaciones.
+//   - Banner "Sincronizado hace X · Cifrado activo".
+//   - Fila de KPIs: gran card verde (total ganado) + dos mini cards
+//     (alertas críticas y tareas de hoy).
+//   - Card "Próximas tareas" con dos items con fecha grande a la izquierda.
+//   - Bottom nav de 5 tabs (Inicio · Ganado · [+] · Tareas · Asistente)
+//     que expande un panel contextual arriba cuando se toca una sección.
+//
+// NOTAS:
+//   * NO incluyo la card "Alertas de datos" (calidad de datos) porque
+//     me pediste omitirla del rediseño.
+//   * Los datos son reales: llaman a CattleService para el conteo total.
+//     Los conteos de alertas/tareas quedan estáticos por ahora — cuando
+//     rediseñemos Notifs y Tareas (Grupos F/G) los conectamos.
+
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
 import '../../../../core/application/app_state_repository.dart';
+import '../../../../core/theme/theme.dart';
+import '../../../cattle/data/services/cattle_service.dart';
+import '../../../notifications/data/services/notification_log_service.dart';
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({Key? key}) : super(key: key);
+  const DashboardPage({super.key});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> with SingleTickerProviderStateMixin {
-  int _selectedIndex = 0;
-  bool _isFabExpanded = false;
-  late AnimationController _animationController;
-  late Animation<double> _rotationAnimation;
+class _DashboardPageState extends State<DashboardPage> {
+  final _cattleService = CattleService();
+  final _notifService = NotificationLogService();
+  int _cattleCount = 0;
+  int _unreadCount = 0;
+  bool _loadingCount = true;
+
+  // Panel contextual del navbar. null = cerrado. valores válidos:
+  //   'ganado' | 'acciones' | 'tareas' | 'asistente'
+  String? _openPanel;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-    _rotationAnimation = Tween<double>(begin: 0.0, end: 0.125).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
+    _loadCounts();
+    _loadUnread();
   }
 
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
+  Future<void> _loadUnread() async {
+    try {
+      final list = await _notifService.list();
+      if (mounted) setState(() => _unreadCount = list.where((n) => !n.isRead).length);
+    } catch (_) {
+      // Silencioso: el badge simplemente no se actualiza si falla.
+    }
   }
 
-  void _toggleFab() {
-    setState(() {
-      _isFabExpanded = !_isFabExpanded;
-      if (_isFabExpanded) {
-        _animationController.forward();
-      } else {
-        _animationController.reverse();
+  Future<void> _loadCounts() async {
+    try {
+      final list = await _cattleService.getCattleList();
+      if (mounted) {
+        setState(() {
+          _cattleCount = list.length;
+          _loadingCount = false;
+        });
       }
+    } catch (_) {
+      if (mounted) setState(() => _loadingCount = false);
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loadingCount = true);
+    await _loadCounts();
+  }
+
+  void _togglePanel(String key) {
+    setState(() {
+      _openPanel = _openPanel == key ? null : key;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppStateRepository>();
-
-    final nombre = appState.userName ?? 'Ganadero Bovara';
-    final rol = appState.userRole ?? 'Ganadero / Propietario';
+    final name = appState.displayName;
+    final initials = _initialsFromName(name);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-      appBar: _buildAppBar(context),
-      bottomNavigationBar: _buildBottomNavigation(),
-      floatingActionButton: _buildExpandableFab(),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            child: Column(
-              children: [
-                _buildUserBanner(nombre, rol),
-                Padding(
-                  padding: const EdgeInsets.all(20.0),
+      backgroundColor: BovaraColors.surfaceAlt,
+      extendBody: true,
+      body: SafeArea(
+        bottom: false,
+        child: Stack(
+          children: [
+            // Contenido scrollable
+            RefreshIndicator(
+              onRefresh: _refresh,
+              color: BovaraColors.primary,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(22, 8, 22, 180),
+                children: [
+                  _Greeting(name: name, initials: initials, unread: _unreadCount),
+                  const SizedBox(height: 16),
+                  const _SyncBanner(),
+                  const SizedBox(height: 16),
+                  _KpiRow(cattleCount: _cattleCount, loading: _loadingCount),
+                  const SizedBox(height: 16),
+                  const _UpcomingTasksCard(),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+            // Navbar + panel expandible
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildSummaryCard(),
-                      const SizedBox(height: 16),
-                      _buildRecentRecordsCard(),
-                      const SizedBox(height: 16),
-                      // ✅ CARD DE ALERTAS ELIMINADA
-                      // ✅ CARD DE PRÓXIMAS TAREAS CON NAVEGACIÓN
-                      _buildUpcomingTasksCard(),
-                      const SizedBox(height: 24),
+                      // Panel contextual (aparece encima del navbar)
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                        child: _openPanel == null
+                            ? const SizedBox.shrink()
+                            : _ContextualPanel(key: ValueKey(_openPanel), which: _openPanel!),
+                      ),
+                      const SizedBox(height: 10),
+                      _BottomNav(
+                        current: _openPanel,
+                        onTapInicio: () => setState(() => _openPanel = null),
+                        onTapGanado: () => _togglePanel('ganado'),
+                        onTapAcciones: () => _togglePanel('acciones'),
+                        onTapTareas: () => _togglePanel('tareas'),
+                        onTapAsistente: () => _togglePanel('asistente'),
+                      ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          // Overlay cuando el FAB está expandido
-          if (_isFabExpanded)
-            GestureDetector(
-              onTap: _toggleFab,
-              child: Container(
-                color: Colors.black.withOpacity(0.5),
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ---------- APPBAR ----------
-
-  AppBar _buildAppBar(BuildContext context) {
-    return AppBar(
-      elevation: 2,
-      backgroundColor: Colors.white,
-      foregroundColor: const Color(0xFF2E7D32),
-      centerTitle: false,
-      title: const Text(
-        'Bovara',
-        style: TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF2E7D32),
-        ),
-      ),
-      actions: [
-        IconButton(
-          icon: Stack(
-            children: [
-              Icon(
-                Icons.notifications_outlined,
-                size: 24,
-                color: Colors.grey[700],
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          onPressed: () {
-            context.go('/notifications');
-          },
-        ),
-        InkWell(
-          onTap: () {
-            context.go('/account');
-          },
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            width: 32,
-            height: 32,
-            margin: const EdgeInsets.only(right: 16),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE0E0E0),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.person,
-              size: 18,
-              color: Color(0xFF616161),
-            ),
-          ),
-        ),
-      ],
-    );
+  String _initialsFromName(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return 'CP';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
   }
+}
 
-  // ---------- FAB EXPANDIBLE ----------
+// ═════════════════════════════════════════════════════════════════
+// SALUDO + AVATAR + CAMPANA
+// ═════════════════════════════════════════════════════════════════
 
-  Widget _buildExpandableFab() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+class _Greeting extends StatelessWidget {
+  final String name;
+  final String initials;
+  final int unread;
+
+  const _Greeting({
+    required this.name,
+    required this.initials,
+    required this.unread,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        if (_isFabExpanded) ...[
-          _buildFabOption(
-            icon: Icons.pets,
-            label: 'Agregar vaca',
-            onPressed: () {
-              _toggleFab();
-              context.push('/cattle/add');
-            },
-          ),
-          const SizedBox(height: 12),
-          _buildFabOption(
-            icon: Icons.favorite,
-            label: 'Calcular celo',
-            onPressed: () {
-              _toggleFab();
-              context.push('/cattle/heat-calculator');
-            },
-          ),
-          const SizedBox(height: 12),
-          _buildFabOption(
-            icon: Icons.medical_services,
-            label: 'Registrar vacuna',
-            onPressed: () {
-              _toggleFab();
-              context.push('/cattle/vaccine');
-            },
-          ),
-          const SizedBox(height: 16),
-        ],
-        // FAB principal
-        Container(
-          width: 64,
-          height: 64,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2E7D32),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 25,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          child: RotationTransition(
-            turns: _rotationAnimation,
-            child: IconButton(
-              icon: Icon(
-                _isFabExpanded ? Icons.close : Icons.add,
-                color: Colors.white,
-                size: 30,
-              ),
-              onPressed: _toggleFab,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFabOption({
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-  }) {
-    return Material(
-      elevation: 6,
-      borderRadius: BorderRadius.circular(30),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(30),
-        child: Container(
-          height: 50,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2E7D32).withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: const Color(0xFF2E7D32), size: 20),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF222222),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---------- BANNER USUARIO ----------
-
-  Widget _buildUserBanner(String userName, String role) {
-    return Container(
-      height: 108,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [Color(0xFF2E7D32), Color(0xFF388E3C)],
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
+        Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                'Hola, $userName',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                'Buen día,',
+                style: BovaraText.label(
+                  size: 13,
+                  color: BovaraColors.textMuted,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
-                role,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFFA5D6A7),
+                name,
+                style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                  fontSize: 23,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.23,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.pets,
+        ),
+        // Campana con badge
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Material(
               color: Colors.white,
-              size: 32,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => context.push('/notifications'),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 12,
+                        offset: Offset(0, 4),
+                        spreadRadius: -6,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.notifications_none_rounded,
+                    size: 22,
+                    color: BovaraColors.textPrimary,
+                  ),
+                ),
+              ),
+            ),
+            if (unread > 0)
+              Positioned(
+                top: 7,
+                right: 6,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: BovaraColors.danger,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 10),
+        // Avatar iniciales con gradient
+        GestureDetector(
+          onTap: () => context.push('/account'),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment(-0.5, -1),
+                end: Alignment(0.5, 1),
+                colors: [BovaraColors.primary, BovaraColors.primaryDeep],
+              ),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                  spreadRadius: -6,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Text(
+                initials,
+                style: BovaraText.label(size: 14, color: Colors.white),
+              ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ---------- TARJETAS ----------
-
-  BoxDecoration _cardDecoration() {
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.1),
-          blurRadius: 6,
-          offset: const Offset(0, 4),
         ),
       ],
     );
   }
+}
 
-  Widget _buildSummaryCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              color: const Color(0xFF2E7D32).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.content_paste_rounded,
-              color: Color(0xFF2E7D32),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Resumen de hoy',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF222222),
-                  ),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Pendientes de hoy: 3 tareas',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF222222),
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Pesajes, vacunas, revisiones',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF757575),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+// ═════════════════════════════════════════════════════════════════
+// BANNER DE SYNC
+// ═════════════════════════════════════════════════════════════════
 
-  Widget _buildRecentRecordsCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8D6E63).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.content_paste_outlined,
-                  color: Color(0xFF8D6E63),
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'Registros recientes',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF222222),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildRecordItem('Pesaje Lote A', 'Hoy 10:00', true),
-          _buildRecordItem('Vacuna Lote B', 'Ayer', true),
-          _buildRecordItem('Revisión Lote C', 'Hace 2 días', false),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () {
-              context.push('/cattle');
-            },
-            child: const Text(
-              'Ver todos',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF2E7D32),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+class _SyncBanner extends StatelessWidget {
+  const _SyncBanner();
 
-  Widget _buildRecordItem(String title, String time, bool showDivider) {
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        border: showDivider
-            ? Border(bottom: BorderSide(color: Colors.grey[100]!))
-            : null,
+        color: BovaraColors.primarySoftBg,
+        border: Border.all(color: const Color(0xFFC4E2CA)),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
           Container(
             width: 8,
             height: 8,
-            decoration: const BoxDecoration(
-              color: Color(0xFF388E3C),
+            decoration: BoxDecoration(
+              color: BovaraColors.primary,
               shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: BovaraColors.primary.withValues(alpha: 0.18),
+                  blurRadius: 0,
+                  spreadRadius: 4,
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 12),
+          Text(
+            'Sincronizado hace 4 min',
+            style: BovaraText.label(size: 12.5, color: BovaraColors.primarySoftText),
+          ),
+          const Spacer(),
+          Text(
+            'Cifrado activo',
+            style: BovaraText.label(size: 11.5, color: const Color(0xFF5C8863)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// FILA DE KPIs
+// ═════════════════════════════════════════════════════════════════
+
+class _KpiRow extends StatelessWidget {
+  final int cattleCount;
+  final bool loading;
+
+  const _KpiRow({required this.cattleCount, required this.loading});
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(
+        children: [
+          // Card grande verde (total ganado)
+          Expanded(
+            child: GestureDetector(
+              onTap: () => context.push('/cattle'),
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment(-0.3, -1),
+                    end: Alignment(0.7, 1),
+                    colors: [BovaraColors.primary, Color(0xFF1B5C2C)],
+                  ),
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
+                      blurRadius: 34,
+                      offset: const Offset(0, 18),
+                      spreadRadius: -18,
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    Positioned(
+                      right: -14,
+                      top: -14,
+                      child: Container(
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        loading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2.4,
+                                ),
+                              )
+                            : Text(
+                                '$cattleCount',
+                                style: BovaraText.title(color: Colors.white).copyWith(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'cabezas en total',
+                          style: BovaraText.label(
+                            size: 12.5,
+                            color: Colors.white.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Dos mini cards apiladas
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF222222),
-                  ),
+              children: const [
+                _MiniKpiCard(
+                  color: BovaraColors.danger,
+                  value: '2',
+                  label: 'alertas críticas',
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  time,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
+                SizedBox(height: 12),
+                _MiniKpiCard(
+                  color: BovaraColors.warning,
+                  value: '3',
+                  label: 'tareas de hoy',
                 ),
               ],
             ),
@@ -508,151 +455,202 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
       ),
     );
   }
+}
 
-  // ✅ CARD DE PRÓXIMAS TAREAS - AHORA ES CLICKEABLE
-  Widget _buildUpcomingTasksCard() {
-    return InkWell(
-      onTap: () {
-        context.go('/reminders');
-      },
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: _cardDecoration(),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2E7D32).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.calendar_month_rounded,
-                    color: Color(0xFF2E7D32),
-                    size: 24,
-                  ),
+class _MiniKpiCard extends StatelessWidget {
+  final Color color;
+  final String value;
+  final String label;
+
+  const _MiniKpiCard({
+    required this.color,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 16,
+            offset: Offset(0, 6),
+            spreadRadius: -10,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                value,
+                style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'Próximas tareas',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF222222),
-                    ),
-                  ),
-                ),
-                // ✅ Icono de flecha para indicar que es clickeable
-                Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: Colors.grey[400],
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildTaskItem(
-              'MAR',
-              '15',
-              'Vacunar Lote C',
-              'Mañana 8:00',
-              const Color(0xFF2E7D32),
-              true,
-            ),
-            _buildTaskItem(
-              'MIÉ',
-              '16',
-              'Pesaje Lote B',
-              'Miércoles 9:30',
-              const Color(0xFF8D6E63),
-              true,
-            ),
-            _buildTaskItem(
-              'JUE',
-              '17',
-              'Revisión veterinaria',
-              'Jueves 10:00',
-              const Color(0xFF388E3C),
-              false,
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: BovaraText.label(size: 11.5, color: BovaraColors.textMuted),
+          ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildTaskItem(
-      String month,
-      String day,
-      String title,
-      String time,
-      Color color,
-      bool showDivider,
-      ) {
+// ═════════════════════════════════════════════════════════════════
+// CARD DE PRÓXIMAS TAREAS
+// ═════════════════════════════════════════════════════════════════
+
+class _UpcomingTasksCard extends StatelessWidget {
+  const _UpcomingTasksCard();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        border: showDivider
-            ? Border(bottom: BorderSide(color: Colors.grey[100]!))
-            : null,
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 22,
+            offset: Offset(0, 8),
+            spreadRadius: -14,
+          ),
+        ],
       ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Próximas tareas',
+                  style: BovaraText.heading().copyWith(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => context.push('/reminders'),
+                child: Text(
+                  'Ver todas',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.primary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _TaskRow(
+            month: 'Mar',
+            day: '15',
+            title: 'Vacunar Lote C',
+            subtitle: 'Mañana · 8:00 AM · 15 animales',
+            highlight: true,
+          ),
+          const Divider(color: Color(0xFFF0F1EB), height: 1),
+          const SizedBox(height: 13),
+          _TaskRow(
+            month: 'Mié',
+            day: '16',
+            title: 'Pesaje Lote B',
+            subtitle: 'Miércoles · 9:30 AM',
+            highlight: false,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskRow extends StatelessWidget {
+  final String month;
+  final String day;
+  final String title;
+  final String subtitle;
+  final bool highlight;
+
+  const _TaskRow({
+    required this.month,
+    required this.day,
+    required this.title,
+    required this.subtitle,
+    required this.highlight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 13),
       child: Row(
         children: [
+          // Bloque de fecha grande
           Container(
-            width: 50,
-            height: 60,
+            width: 46,
+            height: 46,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
+              color: highlight ? const Color(0xFFE7F2E9) : const Color(0xFFF1F1F4),
+              borderRadius: BorderRadius.circular(13),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
                   month,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
+                  style: BovaraText.label(
+                    size: 10,
+                    color: highlight ? BovaraColors.primary : BovaraColors.textMuted,
+                  ).copyWith(letterSpacing: 0.8),
                 ),
-                const SizedBox(height: 2),
                 Text(
                   day,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: color,
+                  style: BovaraText.title(
+                    color: highlight ? BovaraColors.primarySoftText : BovaraColors.textPrimary,
+                  ).copyWith(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 13),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF222222),
-                  ),
+                  style: BovaraText.body(size: 14.5, color: BovaraColors.textPrimary)
+                      .copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  time,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF757575),
-                  ),
+                  subtitle,
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
                 ),
               ],
             ),
@@ -661,86 +659,569 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
       ),
     );
   }
+}
 
-  // ---------- BOTTOM NAV ----------
+// ═════════════════════════════════════════════════════════════════
+// BOTTOM NAV
+// ═════════════════════════════════════════════════════════════════
 
-  Widget _buildBottomNavigation() {
+class _BottomNav extends StatelessWidget {
+  final String? current;
+  final VoidCallback onTapInicio;
+  final VoidCallback onTapGanado;
+  final VoidCallback onTapAcciones;
+  final VoidCallback onTapTareas;
+  final VoidCallback onTapAsistente;
+
+  const _BottomNav({
+    required this.current,
+    required this.onTapInicio,
+    required this.onTapGanado,
+    required this.onTapAcciones,
+    required this.onTapTareas,
+    required this.onTapAsistente,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      height: 80,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
-        ),
-        boxShadow: [
+        color: BovaraColors.darkBar,
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 15,
-            offset: const Offset(0, -4),
+            color: Color(0x8C0B0D0B),
+            blurRadius: 40,
+            offset: Offset(0, 18),
+            spreadRadius: -14,
           ),
         ],
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildNavItem(Icons.home, 'Inicio', 0),
-          _buildNavItem(Icons.content_paste_outlined, 'Registros', 1),
-          const SizedBox(width: 56),
-          _buildNavItem(Icons.calendar_today_outlined, 'Recordatorios', 2),
-          _buildNavItem(Icons.chat_bubble_outline, 'Asistente', 3),
+          _NavItem(
+            icon: Icons.home_rounded,
+            label: 'Inicio',
+            selected: current == null,
+            onTap: onTapInicio,
+          ),
+          _NavItem(
+            icon: Icons.pets_rounded,
+            label: 'Ganado',
+            selected: current == 'ganado',
+            onTap: onTapGanado,
+          ),
+          _NavCenterButton(onTap: onTapAcciones, active: current == 'acciones'),
+          _NavItem(
+            icon: Icons.checklist_rounded,
+            label: 'Tareas',
+            selected: current == 'tareas',
+            onTap: onTapTareas,
+          ),
+          _NavItem(
+            icon: Icons.smart_toy_rounded,
+            label: 'Asistente',
+            selected: current == 'asistente',
+            onTap: onTapAsistente,
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildNavItem(IconData icon, String label, int index) {
-    final isSelected = _selectedIndex == index;
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
 
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return InkWell(
-      onTap: () {
-        setState(() {
-          _selectedIndex = index;
-        });
-
-        switch (index) {
-          case 0:
-            context.go('/home');
-            break;
-          case 1:
-            context.go('/cattle');
-            break;
-          case 2:
-            context.go('/reminders');
-            break;
-          case 3:
-            context.push('/assistant');
-            break;
-        }
-      },
-      child: SizedBox(
-        width: 64,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
-              color: isSelected ? const Color(0xFF2E7D32) : Colors.grey[400],
-              size: 24,
+              size: 20,
+              color: selected ? BovaraColors.primary : BovaraColors.textOnDarkMuted,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected
-                    ? const Color(0xFF2E7D32)
-                    : Colors.grey[400],
+              style: BovaraText.label(
+                size: 10,
+                color: selected ? BovaraColors.primary : BovaraColors.textOnDarkMuted,
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavCenterButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool active;
+
+  const _NavCenterButton({required this.onTap, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedRotation(
+        duration: const Duration(milliseconds: 240),
+        turns: active ? 0.125 : 0, // +45deg cuando está activo → forma de X
+        child: Container(
+          width: 52,
+          height: 52,
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment(-0.3, -1),
+              end: Alignment(0.5, 1),
+              colors: [Color(0xFF3DA35D), BovaraColors.primary],
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: BovaraColors.primary.withValues(alpha: 0.8),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+                spreadRadius: -8,
+              ),
+            ],
+          ),
+          child: const Icon(Icons.add, color: Colors.white, size: 26),
+        ),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// PANEL CONTEXTUAL (aparece encima del navbar cuando toca una sección)
+// ═════════════════════════════════════════════════════════════════
+
+class _ContextualPanel extends StatelessWidget {
+  final String which;
+  const _ContextualPanel({super.key, required this.which});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x47000000),
+            blurRadius: 30,
+            offset: Offset(0, -6),
+            spreadRadius: -12,
+          ),
+        ],
+      ),
+      child: switch (which) {
+        'acciones' => const _PanelAcciones(),
+        'ganado' => const _PanelGanado(),
+        'tareas' => const _PanelTareas(),
+        'asistente' => const _PanelAsistente(),
+        _ => const SizedBox.shrink(),
+      },
+    );
+  }
+}
+
+class _PanelAcciones extends StatelessWidget {
+  const _PanelAcciones();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Registro rápido',
+            style: BovaraText.heading().copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 14),
+        Row(
+          children: const [
+            Expanded(
+              child: _QuickAction(
+                icon: Icons.monitor_weight_outlined,
+                label: 'Pesaje',
+                bgLight: Color(0xFFF4F8F4),
+                borderLight: Color(0xFFE4EFE6),
+                iconBg: Color(0xFFE7F2E9),
+                iconColor: BovaraColors.primary,
+              ),
+            ),
+            SizedBox(width: 11),
+            Expanded(
+              child: _QuickAction(
+                icon: Icons.favorite_rounded,
+                label: 'Celo',
+                bgLight: Color(0xFFFBF0F5),
+                borderLight: Color(0xFFF2DCE7),
+                iconBg: Color(0xFFFCE3EE),
+                iconColor: BovaraColors.celo,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 11),
+        Row(
+          children: const [
+            Expanded(
+              child: _QuickAction(
+                icon: Icons.medical_services_outlined,
+                label: 'Vacuna',
+                bgLight: Color(0xFFEEF3FD),
+                borderLight: Color(0xFFDBE6FA),
+                iconBg: Color(0xFFE3ECFD),
+                iconColor: BovaraColors.info,
+              ),
+            ),
+            SizedBox(width: 11),
+            Expanded(
+              child: _QuickAction(
+                icon: Icons.child_friendly_outlined,
+                label: 'Parto',
+                bgLight: Color(0xFFF5F1EA),
+                borderLight: Color(0xFFECE3D3),
+                iconBg: Color(0xFFF1E7D4),
+                iconColor: Color(0xFFB8862E),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color bgLight;
+  final Color borderLight;
+  final Color iconBg;
+  final Color iconColor;
+
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.bgLight,
+    required this.borderLight,
+    required this.iconBg,
+    required this.iconColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: bgLight,
+        border: Border.all(color: borderLight),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, size: 18, color: iconColor),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              label,
+              style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
+                  .copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PanelGanado extends StatelessWidget {
+  const _PanelGanado();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Buscar en el hato',
+            style: BovaraText.heading().copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: () => context.push('/cattle'),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F5F0),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search, size: 18, color: BovaraColors.textDisabled),
+                const SizedBox(width: 10),
+                Text('Arete, nombre o lote…',
+                    style: BovaraText.body(size: 13.5, color: BovaraColors.textDisabled)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 13),
+        Wrap(
+          spacing: 9,
+          runSpacing: 9,
+          children: [
+            _LoteChip(label: 'Lote A · 42', active: true),
+            _LoteChip(label: 'Lote B · 51'),
+            _LoteChip(label: 'Lote C · 55'),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _LoteChip extends StatelessWidget {
+  final String label;
+  final bool active;
+  const _LoteChip({required this.label, this.active = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+      decoration: BoxDecoration(
+        color: active ? BovaraColors.primary : BovaraColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: BovaraText.label(
+          size: 12.5,
+          color: active ? Colors.white : BovaraColors.textPrimary,
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelTareas extends StatelessWidget {
+  const _PanelTareas();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Pendientes de hoy · 2 de 3',
+            style: BovaraText.heading().copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        _PendingTaskRow(
+          title: 'Pesaje matutino',
+          subtitle: '7:00 AM · Lote A',
+          dotColor: BovaraColors.primary,
+          dotBg: const Color(0xFFE7F2E9),
+        ),
+        const SizedBox(height: 9),
+        _PendingTaskRow(
+          title: 'Control sanitario',
+          subtitle: '2:00 PM · Lote C',
+          dotColor: BovaraColors.info,
+          dotBg: const Color(0xFFE3ECFD),
+        ),
+        const SizedBox(height: 12),
+        // Botones de navegación a las dos vistas completas
+        Row(
+          children: [
+            Expanded(
+              child: _PanelLinkBtn(
+                icon: Icons.checklist_rounded,
+                label: 'Ver tareas',
+                onTap: () => context.push('/reminders'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _PanelLinkBtn(
+                icon: Icons.calendar_month_rounded,
+                label: 'Calendario',
+                onTap: () => context.push('/calendar'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _PanelLinkBtn extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _PanelLinkBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+        decoration: BoxDecoration(
+          color: BovaraColors.primarySoftBg,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 15, color: BovaraColors.primarySoftText),
+            const SizedBox(width: 7),
+            Text(label,
+                style: BovaraText.label(
+                    size: 12.5, color: BovaraColors.primarySoftText)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingTaskRow extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Color dotColor;
+  final Color dotBg;
+
+  const _PendingTaskRow({
+    required this.title,
+    required this.subtitle,
+    required this.dotColor,
+    required this.dotBg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8F4),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: dotBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.task_alt, size: 16, color: dotColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
+                        .copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(subtitle,
+                    style: BovaraText.label(size: 12, color: BovaraColors.textMuted)),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right, color: BovaraColors.textDisabled, size: 18),
+        ],
+      ),
+    );
+  }
+}
+
+class _PanelAsistente extends StatelessWidget {
+  const _PanelAsistente();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Pregúntale a Bovi',
+            style: BovaraText.heading().copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        _SuggestedPrompt(text: '¿Qué vacas toca vacunar hoy?'),
+        const SizedBox(height: 9),
+        _SuggestedPrompt(text: '¿Alguna vaca en celo?'),
+      ],
+    );
+  }
+}
+
+class _SuggestedPrompt extends StatelessWidget {
+  final String text;
+  const _SuggestedPrompt({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => context.push('/assistant'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: BovaraColors.primarySoftBg,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          text,
+          style: BovaraText.body(size: 13, color: BovaraColors.primarySoftText)
+              .copyWith(fontWeight: FontWeight.w600),
         ),
       ),
     );

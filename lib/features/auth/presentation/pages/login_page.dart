@@ -1,10 +1,25 @@
 // lib/features/auth/presentation/pages/login_page.dart
+//
+// Login (Grupo B — Login del prototipo).
+// Cabeza: sello grande con gradient, título "Bienvenido de vuelta".
+// Campos: email + password (con toggle mostrar/ocultar).
+// Extras: enlace "¿Olvidaste tu contraseña?", divider "o", botón crear cuenta,
+//         chip "Cifrado de extremo a extremo activo".
+// Footer: banner ambar cuando no hay conexión ("Modo offline activo").
+//
+// La LÓGICA (AuthService, AppStateRepository, ConnectivityService) se
+// preserva 100%; solo cambia la capa visual.
+
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:provider/provider.dart';
+
 import '../../../../core/application/app_state_repository.dart';
 import '../../../../core/services/connectivity_service.dart';
+import '../../../../core/services/notification_service.dart';
+import '../../../../core/theme/theme.dart';
+import '../../../../core/widgets/bovara_buttons.dart';
+import '../../../../core/widgets/bovara_text_field.dart';
 import '../../data/services/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
@@ -18,10 +33,9 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _userController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _obscurePassword = true;
   bool _isLoading = false;
 
-  late ConnectivityService _connectivityService;
+  late final ConnectivityService _connectivityService;
   bool _isConnected = true;
 
   final _authService = AuthService();
@@ -29,16 +43,10 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
-
     _connectivityService = ConnectivityService();
     _isConnected = _connectivityService.isConnected;
-
     _connectivityService.connectivityStream.listen((isConnected) {
-      if (mounted) {
-        setState(() {
-          _isConnected = isConnected;
-        });
-      }
+      if (mounted) setState(() => _isConnected = isConnected);
     });
   }
 
@@ -50,15 +58,14 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  // ✅ MÉTODO CORREGIDO
   Future<void> _onLoginPressed() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (!_isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No hay conexión a internet. No se puede iniciar sesión.'),
-          backgroundColor: Colors.orange,
+          content: Text('Sin conexión. No se puede iniciar sesión.'),
+          backgroundColor: BovaraColors.warning,
         ),
       );
       return;
@@ -72,370 +79,321 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text,
       );
 
-      print('✅ Login exitoso: ${response.user.email}');
-      print('👤 Nombre: ${response.user.fullName}');
-      print('📧 Email: ${response.user.email}');
-      print('📱 Phone: ${response.user.phone}');
-      print('🏠 Ranch: ${response.user.ranch}');
-      print('👔 Role: ${response.user.role}');
+      if (!mounted) return;
 
-      if (mounted) {
-        final appState = context.read<AppStateRepository>();
+      final appState = context.read<AppStateRepository>();
+      appState.updateProfile(
+        name: response.user.fullName,
+        email: response.user.email,
+        phone: response.user.phone,
+        ranch: response.user.ranch,
+        role: response.user.role,
+      );
+      appState.setLoggedIn(true, email: response.user.email);
+      NotificationService().registerToken();
 
-        // ✅ GUARDAR DATOS (sin ?? porque updateProfile maneja nulls)
-        appState.updateProfile(
-          name: response.user.fullName,
-          email: response.user.email,
-          phone: response.user.phone,
-          ranch: response.user.ranch,
-          role: response.user.role,
-        );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('¡Bienvenido, ${response.user.fullName}!'),
+          backgroundColor: BovaraColors.primary,
+        ),
+      );
 
-        appState.setLoggedIn(
-          true,
-          email: response.user.email,
-        );
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('¡Bienvenido ${response.user.fullName ?? "Usuario"}!'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-
-        context.go('/home');
-      }
+      context.go('/home');
     } catch (e) {
-      print('❌ Error en login: $e');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.toString().replaceAll('Exception: ', '').replaceAll('Error de conexión: ', ''),
-            ),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: BovaraColors.danger,
+        ),
+      );
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
-      resizeToAvoidBottomInset: false,
+      backgroundColor: BovaraColors.surface,
       body: SafeArea(
-        child: Stack(
-          children: [
-            // Contenido principal
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 70),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(height: 8),
-                          const Center(
-                            child: Text(
-                              'Bovara',
-                              style: TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF222222),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              // Contenido scrollable
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(30, 22, 30, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Cabeza: sello + título
+                      Center(
+                        child: Column(
+                          children: [
+                            const _LoginSeal(),
+                            const SizedBox(height: 20),
+                            Text(
+                              'Bienvenido de vuelta',
+                              style: BovaraText.title().copyWith(
+                                fontSize: 25,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.25,
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          Align(
-                            alignment: Alignment.center,
-                            child: Container(
-                              width: 72,
-                              height: 72,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                              child: const Center(
-                                child: FaIcon(
-                                  FontAwesomeIcons.cow,
-                                  color: Colors.white,
-                                  size: 36,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          const Center(
-                            child: Text(
-                              'Bienvenido',
-                              style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF222222),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Center(
-                            child: Text(
+                            const SizedBox(height: 7),
+                            Text(
                               'Inicia sesión para continuar',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Color(0xFF616161),
+                              style: BovaraText.body(
+                                size: 14,
+                                color: BovaraColors.textSecondary,
+                              ).copyWith(fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      // Campos
+                      BovaraTextField(
+                        label: 'Email o teléfono',
+                        hint: 'don.carlos@rancho.com',
+                        controller: _userController,
+                        keyboardType: TextInputType.emailAddress,
+                        leadingIcon: Icons.mail_outline,
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Ingresa tu email o teléfono'
+                            : null,
+                      ),
+                      const SizedBox(height: 16),
+                      BovaraTextField(
+                        label: 'Contraseña',
+                        controller: _passwordController,
+                        obscureText: true,
+                        canToggleObscure: true,
+                        leadingIcon: Icons.lock_outline,
+                        validator: (v) => (v == null || v.length < 6)
+                            ? 'Mínimo 6 caracteres'
+                            : null,
+                      ),
+                      const SizedBox(height: 9),
+                      // "¿Olvidaste tu contraseña?"
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: GestureDetector(
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Función disponible próximamente'),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            '¿Olvidaste tu contraseña?',
+                            style: BovaraText.label(
+                              size: 13,
+                              color: BovaraColors.primary,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // Botón login
+                      PrimaryButton(
+                        label: 'Iniciar sesión',
+                        onPressed: _isLoading ? null : _onLoginPressed,
+                        isLoading: _isLoading,
+                        height: 54,
+                      ),
+                      const SizedBox(height: 22),
+                      // Divider "o"
+                      _OrDivider(),
+                      const SizedBox(height: 22),
+                      SecondaryButton(
+                        label: 'Crear cuenta nueva',
+                        onPressed: () => context.go('/signup'),
+                        height: 52,
+                      ),
+                      const SizedBox(height: 20),
+                      // Chip cifrado
+                      Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.lock_outline,
+                                size: 14, color: BovaraColors.primary),
+                            const SizedBox(width: 7),
+                            Text(
+                              'Cifrado de extremo a extremo activo',
+                              style: BovaraText.label(
+                                size: 12.5,
+                                color: BovaraColors.textSecondary,
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 24),
-
-                          // Formulario
-                          Form(
-                            key: _formKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // Email
-                                TextFormField(
-                                  controller: _userController,
-                                  keyboardType: TextInputType.emailAddress,
-                                  enabled: !_isLoading,
-                                  decoration: InputDecoration(
-                                    hintText: 'Email o teléfono',
-                                    filled: true,
-                                    fillColor: const Color(0xFFF5F5F5),
-                                    prefixIcon: const Icon(Icons.person),
-                                    suffixIcon: const Icon(
-                                      Icons.alternate_email_outlined,
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(
-                                        color: Color(0xFFDDDDDD),
-                                      ),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide(
-                                        color: colorScheme.primary,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                  ),
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Ingresa tu email o teléfono';
-                                    }
-                                    if (!value.contains('@')) {
-                                      return 'Ingresa un email válido';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 16),
-
-                                // Contraseña
-                                TextFormField(
-                                  controller: _passwordController,
-                                  obscureText: _obscurePassword,
-                                  enabled: !_isLoading,
-                                  decoration: InputDecoration(
-                                    hintText: 'Contraseña',
-                                    filled: true,
-                                    fillColor: const Color(0xFFF5F5F5),
-                                    prefixIcon: const Icon(Icons.lock_outline),
-                                    suffixIcon: IconButton(
-                                      icon: Icon(
-                                        _obscurePassword
-                                            ? Icons.visibility_outlined
-                                            : Icons.visibility_off_outlined,
-                                      ),
-                                      onPressed: () {
-                                        setState(() {
-                                          _obscurePassword = !_obscurePassword;
-                                        });
-                                      },
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(
-                                        color: Color(0xFFDDDDDD),
-                                      ),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide(
-                                        color: colorScheme.primary,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                  ),
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return 'Ingresa tu contraseña';
-                                    }
-                                    if (value.length < 6) {
-                                      return 'Usa al menos 6 caracteres';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 20),
-
-                                // Botón Iniciar sesión
-                                SizedBox(
-                                  height: 50,
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: colorScheme.primary,
-                                      foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: _isLoading ? null : _onLoginPressed,
-                                    child: _isLoading
-                                        ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                        : const Text(
-                                      'Iniciar sesión',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-
-                                // Botón Crear cuenta
-                                SizedBox(
-                                  height: 50,
-                                  child: OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      side: const BorderSide(
-                                        color: Color(0xFFCCCCCC),
-                                      ),
-                                    ),
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () {
-                                      context.go('/signup');
-                                    },
-                                    child: const Text(
-                                      'Crear cuenta',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500,
-                                        color: Color(0xFF222222),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-
-                                // Cifrado activo
-                                const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.lock_outline,
-                                      size: 18,
-                                      color: Color(0xFF2E7D32),
-                                    ),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'Cifrado activo',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Color(0xFF2E7D32),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
-            ),
+              // Footer offline (solo si no hay conexión)
+              if (!_isConnected) const _OfflineBanner(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-            // Banner fijo en la parte inferior
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: double.infinity,
-                color: _isConnected
-                    ? const Color(0xFFE8F5E9)
-                    : const Color(0xFFFFF3E0),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _isConnected ? Icons.wifi : Icons.sync_problem_outlined,
-                      color: _isConnected
-                          ? const Color(0xFF2E7D32)
-                          : const Color(0xFFF57C00),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        _isConnected
-                            ? 'Conectado - Sincronización disponible'
-                            : 'Sin conexión - Modo offline activo',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: _isConnected
-                              ? const Color(0xFF2E7D32)
-                              : const Color(0xFFF57C00),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
+// ─────────────────────────────────────────────────
+// Sub-widgets
+// ─────────────────────────────────────────────────
+
+class _LoginSeal extends StatelessWidget {
+  const _LoginSeal();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [BovaraColors.primary, BovaraColors.primaryDeep],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
+            blurRadius: 30,
+            offset: const Offset(0, 16),
+            spreadRadius: -12,
+          ),
+        ],
+      ),
+      child: Center(
+        child: SizedBox(
+          width: 34,
+          height: 26,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4EDE0),
+                    borderRadius: BorderRadius.circular(40),
+                  ),
                 ),
               ),
-            ),
-          ],
+              Positioned(
+                left: 9,
+                top: 11,
+                child: Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2B2018),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 9,
+                top: 11,
+                child: Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2B2018),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 1,
+                left: 9,
+                child: Container(
+                  width: 16,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE9B7A6),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _OrDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: BovaraColors.border, height: 1)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Text(
+            'o',
+            style: BovaraText.label(size: 12, color: BovaraColors.textDisabled),
+          ),
+        ),
+        const Expanded(child: Divider(color: BovaraColors.border, height: 1)),
+      ],
+    );
+  }
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFFBF1DD),
+        border: Border(top: BorderSide(color: Color(0xFFF0E2C2))),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: const BoxDecoration(
+              color: Color(0xFFF4D9A0),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.wifi_off, size: 14, color: Color(0xFFB0862E)),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sin conexión · Modo offline activo',
+                  style: BovaraText.label(size: 12.5, color: const Color(0xFF8A6A1E)),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Puedes entrar con tu sesión guardada',
+                  style: BovaraText.body(size: 11.5, color: const Color(0xFFA8863C))
+                      .copyWith(fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

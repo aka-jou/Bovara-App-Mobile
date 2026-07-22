@@ -10,6 +10,7 @@ class CattleModel {
   final double? weight;
   final DateTime? fechaUltimoParto;
   final String? clusterLabel; // 🆕 Viene del backend (opcional)
+  final String? photoUrl; // URL de Cloudinary
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -23,6 +24,7 @@ class CattleModel {
     this.weight,
     this.fechaUltimoParto,
     this.clusterLabel, // 🆕 OPCIONAL
+    this.photoUrl,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -42,6 +44,7 @@ class CattleModel {
           ? DateTime.parse(json['fecha_ultimo_parto'])
           : null,
       clusterLabel: json['cluster_label'], // 🆕
+      photoUrl: json['photo_url'],
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.parse(json['updated_at']),
     );
@@ -56,6 +59,7 @@ class CattleModel {
       if (birthDate != null)
         'birth_date': birthDate!.toIso8601String().split('T')[0],
       if (weight != null) 'weight': weight,
+      if (photoUrl != null) 'photo_url': photoUrl,
       if (fechaUltimoParto != null)
         'fecha_ultimo_parto': fechaUltimoParto!.toIso8601String().split('T')[0],
       // NO enviar cluster_label al crear (se calcula en backend)
