@@ -261,74 +261,22 @@ class _LoginSeal extends StatelessWidget {
       width: 64,
       height: 64,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [BovaraColors.primary, BovaraColors.primaryDeep],
-        ),
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: BovaraColors.border, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
+            color: BovaraColors.primaryDeep.withValues(alpha: 0.25),
             blurRadius: 30,
             offset: const Offset(0, 16),
             spreadRadius: -12,
           ),
         ],
       ),
-      child: Center(
-        child: SizedBox(
-          width: 34,
-          height: 26,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4EDE0),
-                    borderRadius: BorderRadius.circular(40),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 9,
-                top: 11,
-                child: Container(
-                  width: 4,
-                  height: 4,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 9,
-                top: 11,
-                child: Container(
-                  width: 4,
-                  height: 4,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 1,
-                left: 9,
-                child: Container(
-                  width: 16,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE9B7A6),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      padding: const EdgeInsets.all(6),
+      child: Image.asset(
+        'assets/images/bovara_logo.png',
+        fit: BoxFit.contain,
       ),
     );
   }

@@ -102,7 +102,6 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final appState = context.watch<AppStateRepository>();
     final name = appState.displayName;
-    final role = appState.userRole ?? 'Ganadero';
     final ranch = appState.ranchName ?? 'Sin rancho asignado';
 
     return Scaffold(
@@ -113,16 +112,14 @@ class _AccountPageState extends State<AccountPage> {
             child: _GreenHeader(
               name: name,
               initials: _initials(name),
-              subtitle: '$role · $ranch',
+              subtitle: ranch,
               onBack: () => context.go('/home'),
             ),
           ),
           SliverToBoxAdapter(
-            child: Transform.translate(
-              offset: const Offset(0, -38),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-                child: Column(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 16, 22, 0),
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _StatsCard(
@@ -220,7 +217,6 @@ class _AccountPageState extends State<AccountPage> {
                   ],
                 ),
               ),
-            ),
           ),
         ],
       ),
@@ -258,7 +254,7 @@ class _GreenHeader extends StatelessWidget {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 8, 22, 60),
+          padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
           child: Row(
             children: [
               Material(

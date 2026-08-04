@@ -8,6 +8,7 @@ class HeatEventModel {
   final String vaginalDischarge;
   final String vulvaSwelling;
   final String comportamiento;
+  final int? probability;
   final bool wasInseminated;
   final DateTime? inseminationDate;
   final DateTime? createdAt;
@@ -21,6 +22,7 @@ class HeatEventModel {
     required this.vaginalDischarge,
     required this.vulvaSwelling,
     required this.comportamiento,
+    this.probability,
     required this.wasInseminated,
     this.inseminationDate,
     this.createdAt,
@@ -36,6 +38,7 @@ class HeatEventModel {
       vaginalDischarge: json['vaginal_discharge'],
       vulvaSwelling: json['vulva_swelling'],
       comportamiento: json['comportamiento'],
+      probability: json['probability'],
       wasInseminated: json['was_inseminated'],
       inseminationDate: json['insemination_date'] != null
           ? DateTime.parse(json['insemination_date'])
@@ -53,6 +56,7 @@ class HeatEventModel {
       'vaginal_discharge': vaginalDischarge,
       'vulva_swelling': vulvaSwelling,
       'comportamiento': comportamiento,
+      if (probability != null) 'probability': probability,
       'was_inseminated': wasInseminated,
       if (inseminationDate != null)
         'insemination_date': inseminationDate!.toIso8601String().split('T')[0],

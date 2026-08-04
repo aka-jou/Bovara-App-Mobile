@@ -15,12 +15,20 @@
 // LÓGICA: recibe CattleModel via `extra` del router (para renderizar rápido)
 // y luego refresca los detalles desde la API.
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/theme/theme.dart';
+import '../../../../core/services/cloudinary_service.dart';
+import '../../../../core/widgets/bovara_buttons.dart';
 import '../../data/models/cattle_model.dart';
 import '../../data/services/cattle_service.dart';
+import '../../data/services/health_event_service.dart';
+import '../../data/services/heat_event_service.dart';
+import '../../data/models/health_event_model.dart';
+import '../../data/models/heat_event_model.dart';
 
 class CattleDetailPage extends StatefulWidget {
   final String cattleId;
@@ -38,7 +46,9 @@ class CattleDetailPage extends StatefulWidget {
 
 class _CattleDetailPageState extends State<CattleDetailPage> {
   final _service = CattleService();
+  final _heatService = HeatEventService();
   CattleModel? _cattle;
+  HeatEventModel? _latestHeat;
   bool _loading = false;
 
   @override
@@ -52,14 +62,83 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
   Future<void> _refresh() async {
     try {
       final fresh = await _service.getCattleById(widget.cattleId);
+      HeatEventModel? latestHeat;
+      try {
+        final heats = await _heatService.getHeatEventsByCattle(widget.cattleId);
+        if (heats.isNotEmpty) {
+          heats.sort((a, b) => b.heatDate.compareTo(a.heatDate));
+          latestHeat = heats.first;
+        }
+      } catch (_) {
+        // Si falla el historial de celo, seguimos mostrando el resto.
+      }
       if (!mounted) return;
       setState(() {
         _cattle = fresh;
+        _latestHeat = latestHeat;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
+    }
+  }
+
+  /// Registra un parto: suma 1 al contador de partos de la madre y,
+  /// opcionalmente, registra a la cría como animal nuevo ligado a ella
+  /// (misma logica que la herramienta register_birth de Bovi, pero
+  /// desde la app usando los endpoints genericos ya existentes).
+  Future<void> _registerBirth(CattleModel mother) async {
+    final result = await showModalBottomSheet<_BirthFormResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => _BirthForm(motherLote: mother.lote),
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      await _service.updateCattle(mother.id, {
+        'num_partos': mother.numPartos + 1,
+        'fecha_ultimo_parto': result.birthDate.toIso8601String().split('T')[0],
+      });
+
+      if (result.registerCalf) {
+        final now = DateTime.now();
+        await _service.createCattle(CattleModel(
+          id: '',
+          name: result.calfName!,
+          lote: result.calfLote!,
+          breed: mother.breed,
+          gender: result.calfGender!,
+          birthDate: result.birthDate,
+          motherCattleId: mother.id,
+          createdAt: now,
+          updatedAt: now,
+        ));
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.registerCalf
+              ? 'Parto registrado y cría agregada al hato'
+              : 'Parto registrado'),
+          backgroundColor: BovaraColors.primary,
+        ),
+      );
+      _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al registrar el parto: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: BovaraColors.danger,
+        ),
+      );
     }
   }
 
@@ -104,39 +183,34 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
       backgroundColor: BovaraColors.surfaceAlt,
       body: CustomScrollView(
         slivers: [
-          SliverToBoxAdapter(child: _Header(cattle: cattle)),
+          SliverToBoxAdapter(child: _Header(cattle: cattle, onEdited: _refresh)),
           SliverToBoxAdapter(
-            child: Transform.translate(
-              offset: const Offset(0, -40),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-                child: Column(
-                  children: [
-                    _HeroCard(cattle: cattle),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 16, 22, 0),
+              child: Column(
+                children: [
+                  _HeroCard(cattle: cattle, onPhotoChanged: _refresh),
+                  const SizedBox(height: 14),
+                  _AnimalSheet(cattle: cattle),
+                  const SizedBox(height: 14),
+                  _QuickActionsRow(
+                    onVaccine: () =>
+                        context.push('/cattle/${cattle.id}/vaccine', extra: cattle),
+                    isFemale: cattle.gender.toLowerCase() == 'female',
+                    onBirth: () => _registerBirth(cattle),
+                  ),
+                  if (cattle.gender.toLowerCase() == 'female') ...[
                     const SizedBox(height: 14),
-                    _AnimalSheet(cattle: cattle),
-                    const SizedBox(height: 14),
-                    _QuickActionsRow(
-                      onVaccine: () =>
-                          context.push('/cattle/${cattle.id}/vaccine', extra: cattle),
-                      isFemale: cattle.gender.toLowerCase() == 'female',
-                      onHeat: () =>
+                    _ReproStatusCard(
+                      latestHeat: _latestHeat,
+                      onRegisterHeat: () =>
                           context.push('/cattle/${cattle.id}/zeal', extra: cattle),
                     ),
-                    if (cattle.gender.toLowerCase() == 'female') ...[
-                      const SizedBox(height: 14),
-                      _ReproStatusCard(
-                        onRegisterHeat: () =>
-                            context.push('/cattle/${cattle.id}/zeal', extra: cattle),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    _WeightChartCard(cattle: cattle),
-                    const SizedBox(height: 14),
-                    const _EventsHistoryCard(),
-                    const SizedBox(height: 40),
                   ],
-                ),
+                  const SizedBox(height: 14),
+                  _EventsHistoryCard(cattleId: cattle.id),
+                  const SizedBox(height: 40),
+                ],
               ),
             ),
           ),
@@ -152,7 +226,8 @@ class _CattleDetailPageState extends State<CattleDetailPage> {
 
 class _Header extends StatelessWidget {
   final CattleModel cattle;
-  const _Header({required this.cattle});
+  final VoidCallback onEdited;
+  const _Header({required this.cattle, required this.onEdited});
 
   @override
   Widget build(BuildContext context) {
@@ -167,7 +242,7 @@ class _Header extends StatelessWidget {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 10, 22, 60),
+          padding: const EdgeInsets.fromLTRB(22, 10, 22, 20),
           child: Row(
             children: [
               Material(
@@ -191,15 +266,16 @@ class _Header extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Vaca #${_shortId(cattle.id)}',
+                      '${cattle.arete} · ${cattle.name}',
                       style: BovaraText.title(color: Colors.white).copyWith(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 1),
                     Text(
-                      '${cattle.name} · ${cattle.lote}',
+                      'Lote: ${cattle.lote}',
                       style: BovaraText.label(
                         size: 12,
                         color: Colors.white.withValues(alpha: 0.8),
@@ -212,10 +288,9 @@ class _Header extends StatelessWidget {
                 color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Editar disponible próximamente')),
-                    );
+                  onTap: () async {
+                    final updated = await context.push<bool>('/cattle/new', extra: cattle);
+                    if (updated == true) onEdited();
                   },
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -233,39 +308,58 @@ class _Header extends StatelessWidget {
       ),
     );
   }
-
-  String _shortId(String id) =>
-      id.replaceAll('-', '').substring(0, 3).toUpperCase();
 }
 
 // ═════════════════════════════════════════════════════════════════
 // HERO CARD (foto + chips + stats)
 // ═════════════════════════════════════════════════════════════════
 
-class _HeroCard extends StatelessWidget {
+class _HeroCard extends StatefulWidget {
   final CattleModel cattle;
-  const _HeroCard({required this.cattle});
+  final VoidCallback onPhotoChanged;
+  const _HeroCard({required this.cattle, required this.onPhotoChanged});
+
+  @override
+  State<_HeroCard> createState() => _HeroCardState();
+}
+
+class _HeroCardState extends State<_HeroCard> {
+  final _picker = ImagePicker();
+  final _cloudinary = CloudinaryService();
+  final _cattleService = CattleService();
+  bool _uploading = false;
+
+  Future<void> _pickAndUploadPhoto() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+
+      setState(() => _uploading = true);
+      final url = await _cloudinary.uploadImage(File(picked.path));
+      await _cattleService.updateCattle(widget.cattle.id, {'photo_url': url});
+
+      if (!mounted) return;
+      setState(() => _uploading = false);
+      widget.onPhotoChanged();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No pude subir la foto: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: BovaraColors.danger,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final chips = <Widget>[
-      if (cattle.gender.toLowerCase() == 'female')
-        _MiniChip(
-          label: 'En celo · 94%',
-          bg: BovaraColors.celoSoftBg,
-          fg: BovaraColors.celoSoftText,
-        ),
-      _MiniChip(
-        label: cattle.breed,
-        bg: BovaraColors.surfaceAlt,
-        fg: BovaraColors.textPrimary,
-      ),
-      _MiniChip(
-        label: cattle.gender.toLowerCase() == 'female' ? 'Hembra' : 'Macho',
-        bg: BovaraColors.surfaceAlt,
-        fg: BovaraColors.textPrimary,
-      ),
-    ];
+    final cattle = widget.cattle;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -284,69 +378,92 @@ class _HeroCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Slot de foto — muestra la foto real de Cloudinary si existe
-          Container(
-            height: 168,
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: BovaraColors.surfaceAlt,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: BovaraColors.border, width: 1),
-            ),
-            child: cattle.photoUrl != null && cattle.photoUrl!.isNotEmpty
-                ? Image.network(
-                    cattle.photoUrl!,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, progress) =>
-                        progress == null
-                            ? child
-                            : const Center(
-                                child: CircularProgressIndicator(
-                                  color: BovaraColors.primary,
-                                  strokeWidth: 2.4,
+          // Slot de foto — muestra la foto real de Cloudinary si existe,
+          // y siempre deja tocar para subir/cambiarla (necesario porque
+          // si la vaca se registró por chat con Bovi, no tiene foto: Bovi
+          // no puede acceder a la galería del celular).
+          GestureDetector(
+            onTap: _uploading ? null : _pickAndUploadPhoto,
+            child: Container(
+              height: 168,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: BovaraColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: BovaraColors.border, width: 1),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (cattle.photoUrl != null && cattle.photoUrl!.isNotEmpty)
+                    Image.network(
+                      cattle.photoUrl!,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, progress) =>
+                          progress == null
+                              ? child
+                              : const Center(
+                                  child: CircularProgressIndicator(
+                                    color: BovaraColors.primary,
+                                    strokeWidth: 2.4,
+                                  ),
                                 ),
-                              ),
-                    errorBuilder: (_, __, ___) => Center(
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.broken_image_outlined,
+                                size: 28, color: BovaraColors.textMuted),
+                            const SizedBox(height: 6),
+                            Text('No se pudo cargar la foto',
+                                style: BovaraText.label(
+                                  size: 12,
+                                  color: BovaraColors.textMuted,
+                                )),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.broken_image_outlined,
+                          const Icon(Icons.add_a_photo_outlined,
                               size: 28, color: BovaraColors.textMuted),
                           const SizedBox(height: 6),
-                          Text('No se pudo cargar la foto',
-                              style: BovaraText.label(
-                                size: 12,
-                                color: BovaraColors.textMuted,
-                              )),
+                          Text(
+                            'Toca para agregar foto',
+                            style: BovaraText.label(size: 12, color: BovaraColors.textMuted),
+                          ),
                         ],
                       ),
                     ),
-                  )
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.add_a_photo_outlined,
-                          size: 28, color: BovaraColors.textMuted),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Sin foto',
-                        style: BovaraText.label(size: 12, color: BovaraColors.textMuted),
+                  if (_uploading)
+                    Container(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.4),
                       ),
-                    ],
-                  ),
-          ),
-          const SizedBox(height: 13),
-          Row(
-            children: [
-              Expanded(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: chips,
-                ),
+                    )
+                  else
+                    // Botón de cámara siempre visible, para cambiar la
+                    // foto aunque ya exista una.
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.camera_alt_outlined, size: 15, color: Colors.white),
+                      ),
+                    ),
+                ],
               ),
-              _SyncIndicator(),
-            ],
+            ),
           ),
           const SizedBox(height: 14),
           Row(
@@ -369,7 +486,7 @@ class _HeroCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: _HeroStat(
-                  value: cattle.fechaUltimoParto != null ? '1' : '0',
+                  value: '${cattle.numPartos}',
                   unit: '',
                   label: 'Partos',
                 ),
@@ -378,47 +495,6 @@ class _HeroCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _MiniChip extends StatelessWidget {
-  final String label;
-  final Color bg;
-  final Color fg;
-  const _MiniChip({required this.label, required this.bg, required this.fg});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
-      child: Text(
-        label,
-        style: BovaraText.label(size: 11, color: fg),
-      ),
-    );
-  }
-}
-
-class _SyncIndicator extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 7,
-          height: 7,
-          decoration: const BoxDecoration(
-            color: BovaraColors.warning,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 5),
-        Text('Pend. subir',
-            style: BovaraText.label(size: 10.5, color: const Color(0xFFA8863C))),
-      ],
     );
   }
 }
@@ -487,8 +563,8 @@ class _AnimalSheet extends StatelessWidget {
               style: BovaraText.heading().copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
           const SizedBox(height: 10),
           _SheetRow(
-            label: 'Arete oficial',
-            value: cattle.tag,
+            label: 'Arete',
+            value: cattle.arete,
             isMono: true,
           ),
           _SheetRow(
@@ -496,15 +572,19 @@ class _AnimalSheet extends StatelessWidget {
             value: cattle.name,
           ),
           _SheetRow(
+            label: 'Lote',
+            value: cattle.lote,
+          ),
+          _SheetRow(
             label: 'Nacimiento',
             value: cattle.birthDate != null
                 ? '${cattle.formattedBirthDate} · ${cattle.age} ${cattle.age == 1 ? 'año' : 'años'}'
                 : 'Sin registro',
           ),
-          if (cattle.fechaUltimoParto != null)
+          if (cattle.gender.toLowerCase() == 'female')
             _SheetRow(
-              label: 'Último parto',
-              value: cattle.formattedLastBirth,
+              label: 'Partos',
+              value: '${cattle.numPartos}',
             ),
           _SheetRow(
             label: 'Raza',
@@ -581,11 +661,30 @@ class _SheetRow extends StatelessWidget {
 // ═════════════════════════════════════════════════════════════════
 
 class _ReproStatusCard extends StatelessWidget {
+  final HeatEventModel? latestHeat;
   final VoidCallback onRegisterHeat;
-  const _ReproStatusCard({required this.onRegisterHeat});
+  const _ReproStatusCard({required this.latestHeat, required this.onRegisterHeat});
+
+  String _hoursAgoText(DateTime heatDate) {
+    final hours = DateTime.now().difference(heatDate).inHours;
+    if (hours < 1) return 'Celo detectado hace menos de 1 h';
+    if (hours < 24) return 'Celo detectado hace $hours h';
+    final days = hours ~/ 24;
+    return 'Celo detectado hace $days ${days == 1 ? 'día' : 'días'}';
+  }
+
+  String _windowText(DateTime heatDate) {
+    final elapsedHours = DateTime.now().difference(heatDate).inHours;
+    final remaining = 12 - elapsedHours;
+    if (remaining <= 0) {
+      return 'Ventana de 12 h desde el celo ya pasó — evalúa si sigue en pie.';
+    }
+    return 'Próximas $remaining h desde que se detectó el celo.';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final heat = latestHeat;
     return Container(
       padding: const EdgeInsets.all(17),
       decoration: BoxDecoration(
@@ -625,35 +724,44 @@ class _ReproStatusCard extends StatelessWidget {
                         style: BovaraText.heading()
                             .copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
                     const SizedBox(height: 1),
-                    Text('Celo detectado hace 6 h',
-                        style: BovaraText.label(
-                          size: 12,
-                          color: const Color(0xFFC4548A),
-                        )),
+                    Text(
+                      heat != null ? _hoursAgoText(heat.heatDate) : 'Sin celo reciente registrado',
+                      style: BovaraText.label(
+                        size: 12,
+                        color: const Color(0xFFC4548A),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 11),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFDF3F8),
-              borderRadius: BorderRadius.circular(14),
+          if (heat != null) ...[
+            const SizedBox(height: 11),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFDF3F8),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Ventana de inseminación',
+                      style: BovaraText.label(size: 12.5, color: const Color(0xFFB03A6B))),
+                  const SizedBox(height: 2),
+                  Text(_windowText(heat.heatDate),
+                      style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
+                          .copyWith(fontWeight: FontWeight.w600)),
+                  if (heat.probability != null) ...[
+                    const SizedBox(height: 2),
+                    Text('Análisis: ${heat.probability}%',
+                        style: BovaraText.label(size: 12, color: BovaraColors.textMuted)),
+                  ],
+                ],
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Ventana de inseminación',
-                    style: BovaraText.label(size: 12.5, color: const Color(0xFFB03A6B))),
-                const SizedBox(height: 2),
-                Text('Próximas 12 horas · óptimo antes de las 8:00 PM',
-                    style: BovaraText.body(size: 13.5, color: BovaraColors.textPrimary)
-                        .copyWith(fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
+          ],
           const SizedBox(height: 12),
           Material(
             color: Colors.transparent,
@@ -680,7 +788,7 @@ class _ReproStatusCard extends StatelessWidget {
                 ),
                 child: Center(
                   child: Text(
-                    'Registrar inseminación',
+                    'Registrar celo',
                     style: BovaraText.label(size: 14, color: Colors.white),
                   ),
                 ),
@@ -697,179 +805,301 @@ class _ReproStatusCard extends StatelessWidget {
 // GRÁFICO DE PESO (mock)
 // ═════════════════════════════════════════════════════════════════
 
-class _WeightChartCard extends StatelessWidget {
-  final CattleModel cattle;
-  const _WeightChartCard({required this.cattle});
+// ═════════════════════════════════════════════════════════════════
+// FORMULARIO DE REGISTRO DE PARTO (bottom sheet)
+// ═════════════════════════════════════════════════════════════════
+
+class _BirthFormResult {
+  final DateTime birthDate;
+  final bool registerCalf;
+  final String? calfName;
+  final String? calfLote;
+  final String? calfGender;
+  const _BirthFormResult({
+    required this.birthDate,
+    required this.registerCalf,
+    this.calfName,
+    this.calfLote,
+    this.calfGender,
+  });
+}
+
+class _BirthForm extends StatefulWidget {
+  final String motherLote;
+  const _BirthForm({required this.motherLote});
 
   @override
-  Widget build(BuildContext context) {
-    // Datos de muestra hasta que exista un endpoint de series de peso
-    final data = <_WPoint>[
-      _WPoint(mes: 'ene', kg: 432, isCurrent: false),
-      _WPoint(mes: 'feb', kg: 438, isCurrent: false),
-      _WPoint(mes: 'mar', kg: 442, isCurrent: false),
-      _WPoint(mes: 'abr', kg: 445, isCurrent: false),
-      _WPoint(mes: 'may', kg: 448, isCurrent: false),
-      _WPoint(mes: 'jun', kg: (cattle.weight ?? 450).toInt(), isCurrent: true),
-    ];
+  State<_BirthForm> createState() => _BirthFormState();
+}
 
-    return _WhiteCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Expanded(
-                child: Text('Evolución de peso',
-                    style: BovaraText.heading()
-                        .copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
-              ),
-              Text(
-                '+18 kg en 6 meses',
-                style: BovaraText.label(size: 12, color: BovaraColors.primary),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 110,
-            child: _WeightBars(data: data),
-          ),
-        ],
-      ),
-    );
+class _BirthFormState extends State<_BirthForm> {
+  DateTime _birthDate = DateTime.now();
+  bool _registerCalf = false;
+  final _calfNameCtrl = TextEditingController();
+  late final TextEditingController _calfLoteCtrl =
+      TextEditingController(text: widget.motherLote);
+  String _calfGender = 'female';
+
+  @override
+  void dispose() {
+    _calfNameCtrl.dispose();
+    _calfLoteCtrl.dispose();
+    super.dispose();
   }
-}
 
-class _WPoint {
-  final String mes;
-  final int kg;
-  final bool isCurrent;
-  const _WPoint({required this.mes, required this.kg, required this.isCurrent});
-}
-
-class _WeightBars extends StatelessWidget {
-  final List<_WPoint> data;
-  const _WeightBars({required this.data});
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _birthDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) setState(() => _birthDate = picked);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final maxKg = data.map((p) => p.kg).reduce((a, b) => a > b ? a : b);
-    final minKg = data.map((p) => p.kg).reduce((a, b) => a < b ? a : b);
-    final range = (maxKg - minKg).clamp(1, 999);
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: data.map((p) {
-        final ratio = (p.kg - minKg) / range;
-        final height = 30 + ratio * 60; // 30-90 px
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(
-                  '${p.kg}',
-                  style: BovaraText.label(
-                    size: 10,
-                    color: p.isCurrent ? BovaraColors.primary : BovaraColors.textMuted,
-                  ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 18, 20, MediaQuery.of(context).viewInsets.bottom + 18),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Registrar parto',
+                style: BovaraText.heading().copyWith(fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            Text('Fecha del parto',
+                style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _pickDate,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                decoration: BoxDecoration(
+                  border: Border.all(color: BovaraColors.border),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                const SizedBox(height: 5),
-                Container(
-                  width: double.infinity,
-                  height: height,
-                  decoration: BoxDecoration(
-                    color: p.isCurrent
-                        ? BovaraColors.primary
-                        : const Color(0xFFC4E2CA),
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(8),
-                      bottom: Radius.circular(4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${_birthDate.day.toString().padLeft(2, '0')}/${_birthDate.month.toString().padLeft(2, '0')}/${_birthDate.year}',
+                        style: BovaraText.body(size: 14, color: BovaraColors.textPrimary),
+                      ),
+                    ),
+                    const Icon(Icons.calendar_today_outlined, size: 16, color: BovaraColors.textMuted),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _registerCalf,
+              onChanged: (v) => setState(() => _registerCalf = v),
+              activeColor: BovaraColors.primary,
+              title: Text('¿La cría también es tuya?',
+                  style: BovaraText.body(size: 14).copyWith(fontWeight: FontWeight.w700)),
+              subtitle: Text('La registramos ligada a esta madre',
+                  style: BovaraText.label(size: 12, color: BovaraColors.textMuted)),
+            ),
+            if (_registerCalf) ...[
+              const SizedBox(height: 4),
+              Text('Nombre de la cría',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _calfNameCtrl,
+                decoration: InputDecoration(
+                  hintText: 'Ej: Estrella',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: BovaraColors.border),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('Lote de la cría',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _calfLoteCtrl,
+                decoration: InputDecoration(
+                  hintText: 'Ej: 406',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: BovaraColors.border),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('Sexo de la cría',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: ChoiceChip(
+                      label: const Text('Hembra'),
+                      selected: _calfGender == 'female',
+                      onSelected: (_) => setState(() => _calfGender = 'female'),
+                      selectedColor: BovaraColors.primarySoftBg,
                     ),
                   ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  p.mes,
-                  style: BovaraText.label(size: 10, color: BovaraColors.textMuted),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ChoiceChip(
+                      label: const Text('Macho'),
+                      selected: _calfGender == 'male',
+                      onSelected: (_) => setState(() => _calfGender = 'male'),
+                      selectedColor: BovaraColors.primarySoftBg,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 20),
+            PrimaryButton(
+              label: 'Guardar',
+              onPressed: () {
+                if (_registerCalf &&
+                    (_calfNameCtrl.text.trim().isEmpty || _calfLoteCtrl.text.trim().isEmpty)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Falta el nombre o el lote de la cría')),
+                  );
+                  return;
+                }
+                Navigator.pop(
+                  context,
+                  _BirthFormResult(
+                    birthDate: _birthDate,
+                    registerCalf: _registerCalf,
+                    calfName: _registerCalf ? _calfNameCtrl.text.trim() : null,
+                    calfLote: _registerCalf ? _calfLoteCtrl.text.trim() : null,
+                    calfGender: _registerCalf ? _calfGender : null,
+                  ),
+                );
+              },
             ),
-          ),
-        );
-      }).toList(),
+          ],
+        ),
+      ),
     );
   }
 }
 
 // ═════════════════════════════════════════════════════════════════
-// HISTORIAL DE EVENTOS (mock timeline)
+// HISTORIAL DE EVENTOS (real: vacunas + celo, mezclados por fecha)
 // ═════════════════════════════════════════════════════════════════
 
-class _EventsHistoryCard extends StatelessWidget {
-  const _EventsHistoryCard();
+class _EventsHistoryCard extends StatefulWidget {
+  final String cattleId;
+  const _EventsHistoryCard({required this.cattleId});
+
+  @override
+  State<_EventsHistoryCard> createState() => _EventsHistoryCardState();
+}
+
+class _EventsHistoryCardState extends State<_EventsHistoryCard> {
+  final _healthService = HealthEventService();
+  final _heatService = HeatEventService();
+  bool _loading = true;
+  List<_Event> _events = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        _healthService.getHealthEventsByCattle(widget.cattleId),
+        _heatService.getHeatEventsByCattle(widget.cattleId),
+      ]);
+      final health = results[0] as List<HealthEventModel>;
+      final heat = results[1] as List<HeatEventModel>;
+
+      final events = <_Event>[
+        for (final h in health)
+          _Event(
+            title: h.eventTypeSpanish == 'Vacuna'
+                ? 'Vacuna${h.medicineName != null ? ': ${h.medicineName}' : ''}'
+                : h.eventTypeSpanish,
+            when: h.formattedDate,
+            meta: () {
+              final parts = [
+                if (h.veterinarianName != null) 'Aplicada por ${h.veterinarianName}',
+                if (h.dosage != null) 'Dosis: ${h.dosage}',
+                if (h.notes != null) h.notes!,
+              ];
+              return parts.isEmpty ? 'Sin notas adicionales' : parts.join(' · ');
+            }(),
+            color: BovaraColors.info,
+            ring: BovaraColors.infoSoftBg,
+            date: h.applicationDate,
+          ),
+        for (final ev in heat)
+          _Event(
+            title: ev.wasInseminated ? 'Celo (inseminada)' : 'Celo detectado',
+            when: ev.formattedHeatDate,
+            meta: [
+              if (ev.probability != null) 'Análisis: ${ev.probability}%',
+              ev.comportamiento,
+            ].join(' · '),
+            color: BovaraColors.celo,
+            ring: BovaraColors.celoSoftBg,
+            date: ev.heatDate,
+          ),
+      ];
+      events.sort((a, b) => b.date.compareTo(a.date));
+
+      if (!mounted) return;
+      setState(() {
+        _events = events;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Placeholder mientras no haya un endpoint unificado de eventos.
-    // Cuando conectemos HealthEventService + HeatEventService aquí se
-    // arma la timeline real.
-    final events = <_Event>[
-      _Event(
-        title: 'Celo detectado',
-        when: 'Hoy · 8:12 AM',
-        meta: 'Signos: monta natural, secreción · ventana 12 h',
-        color: BovaraColors.celo,
-        ring: BovaraColors.celoSoftBg,
-      ),
-      _Event(
-        title: 'Vacunación anti-mastitis',
-        when: 'Hace 12 días',
-        meta: 'Aplicada por Dr. Ramírez · próxima en 6 meses',
-        color: BovaraColors.info,
-        ring: BovaraColors.infoSoftBg,
-      ),
-      _Event(
-        title: 'Pesaje mensual',
-        when: 'Hace 22 días',
-        meta: '432 kg → 450 kg (+18 kg)',
-        color: BovaraColors.primary,
-        ring: BovaraColors.primarySoftBg,
-      ),
-      _Event(
-        title: 'Parto natural',
-        when: '10 ene 2026',
-        meta: 'Cría #501 (hembra) · 38 kg al nacer',
-        color: const Color(0xFFB8862E),
-        ring: BovaraColors.warningSoftBg,
-      ),
-    ];
-
     return _WhiteCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text('Historial de eventos',
-                    style: BovaraText.heading()
-                        .copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
-              ),
-              Text('Ver todo',
-                  style: BovaraText.label(size: 12, color: BovaraColors.primary)),
-            ],
-          ),
+          Text('Historial de eventos',
+              style: BovaraText.heading()
+                  .copyWith(fontSize: 15, fontWeight: FontWeight.w800)),
           const SizedBox(height: 14),
-          for (var i = 0; i < events.length; i++)
-            _EventRow(
-              event: events[i],
-              isLast: i == events.length - 1,
-            ),
+          if (_loading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: CircularProgressIndicator(color: BovaraColors.primary, strokeWidth: 2.4),
+              ),
+            )
+          else if (_events.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                'Todavía no hay vacunas ni eventos de celo registrados para este animal.',
+                style: BovaraText.label(size: 13, color: BovaraColors.textMuted),
+              ),
+            )
+          else
+            for (var i = 0; i < _events.length; i++)
+              _EventRow(
+                event: _events[i],
+                isLast: i == _events.length - 1,
+              ),
         ],
       ),
     );
@@ -882,12 +1112,14 @@ class _Event {
   final String meta;
   final Color color;
   final Color ring;
+  final DateTime date;
   const _Event({
     required this.title,
     required this.when,
     required this.meta,
     required this.color,
     required this.ring,
+    required this.date,
   });
 }
 
@@ -964,16 +1196,17 @@ class _EventRow extends StatelessWidget {
 // Contenedor blanco reutilizable
 // ═════════════════════════════════════════════════════════════════
 
-// Fila de acciones rápidas (vacuna + celo si hembra)
+// Fila de acciones rápidas (vacuna + parto si hembra; celo vive en su
+// propia card de Estado reproductivo, ya no aquí duplicado)
 class _QuickActionsRow extends StatelessWidget {
   final VoidCallback onVaccine;
   final bool isFemale;
-  final VoidCallback onHeat;
+  final VoidCallback onBirth;
 
   const _QuickActionsRow({
     required this.onVaccine,
     required this.isFemale,
-    required this.onHeat,
+    required this.onBirth,
   });
 
   @override
@@ -992,10 +1225,10 @@ class _QuickActionsRow extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: _QuickActionBtn(
-              icon: Icons.favorite_rounded,
-              label: 'Registrar\ncelo',
-              colors: const [Color(0xFFE0559B), BovaraColors.celo],
-              onTap: onHeat,
+              icon: Icons.child_friendly_outlined,
+              label: 'Registrar\nparto',
+              colors: const [Color(0xFFD4A24C), Color(0xFFB8862E)],
+              onTap: onBirth,
             ),
           ),
         ],

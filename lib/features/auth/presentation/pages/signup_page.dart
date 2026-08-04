@@ -35,14 +35,6 @@ class _SignUpPageState extends State<SignUpPage> {
 
   final _authService = AuthService();
   bool _isLoading = false;
-
-  static const _roles = <String>[
-    'Propietario',
-    'Encargado',
-    'Trabajador',
-    'Veterinario',
-  ];
-  String _selectedRole = _roles.first;
   bool _acceptTerms = true;
 
   @override
@@ -86,7 +78,6 @@ class _SignUpPageState extends State<SignUpPage> {
       final appState = context.read<AppStateRepository>();
       appState.updateProfile(
         name: _nombreController.text.trim(),
-        role: _selectedRole,
         ranch: _ranchoController.text.trim(),
         phone: _telefonoController.text.trim(),
         email: email,
@@ -120,53 +111,6 @@ class _SignUpPageState extends State<SignUpPage> {
     );
   }
 
-  Future<void> _pickRole() async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: BovaraColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(BovaraRadius.xxl)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: BovaraColors.border,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Row(
-                children: [
-                  Text('Rol en el rancho',
-                      style: BovaraText.heading(color: BovaraColors.textPrimary)),
-                ],
-              ),
-            ),
-            for (final r in _roles)
-              ListTile(
-                title: Text(r,
-                    style: BovaraText.body(size: 15, color: BovaraColors.textPrimary)),
-                trailing: r == _selectedRole
-                    ? const Icon(Icons.check, color: BovaraColors.primary)
-                    : null,
-                onTap: () => Navigator.pop(ctx, r),
-              ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
-    if (choice != null) setState(() => _selectedRole = choice);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -191,8 +135,6 @@ class _SignUpPageState extends State<SignUpPage> {
                             ? 'Ingresa tu nombre completo'
                             : null,
                       ),
-                      const SizedBox(height: 15),
-                      _RolePicker(role: _selectedRole, onTap: _pickRole),
                       const SizedBox(height: 15),
                       BovaraTextField(
                         label: 'Nombre del rancho',
@@ -319,54 +261,6 @@ class _Header extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _RolePicker extends StatelessWidget {
-  final String role;
-  final VoidCallback onTap;
-  const _RolePicker({required this.role, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Rol en el rancho',
-            style: BovaraText.label(size: 13, color: BovaraColors.textPrimary)),
-        const SizedBox(height: 7),
-        Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
-              decoration: BoxDecoration(
-                border: Border.all(color: BovaraColors.border, width: 1.5),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      role,
-                      style: BovaraText.label(
-                        size: 14.5,
-                        color: BovaraColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.keyboard_arrow_down,
-                      size: 20, color: BovaraColors.textMuted),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

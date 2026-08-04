@@ -99,74 +99,21 @@ class _BigLogo extends StatelessWidget {
       width: 108,
       height: 108,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: BovaraColors.primaryGradient,
-        ),
-        borderRadius: BorderRadius.circular(32),
+        color: Colors.white,
+        shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: BovaraColors.primaryDeep.withValues(alpha: 0.5),
+            color: BovaraColors.primaryDeep.withValues(alpha: 0.35),
             blurRadius: 40,
             offset: const Offset(0, 20),
             spreadRadius: -16,
           ),
         ],
       ),
-      child: Center(
-        child: SizedBox(
-          width: 62,
-          height: 46,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4EDE0),
-                    borderRadius: BorderRadius.circular(80),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 16,
-                top: 14,
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 16,
-                top: 14,
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 3,
-                left: 18,
-                child: Container(
-                  width: 26,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE9B7A6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      padding: const EdgeInsets.all(8),
+      child: Image.asset(
+        'assets/images/bovara_logo.png',
+        fit: BoxFit.contain,
       ),
     );
   }

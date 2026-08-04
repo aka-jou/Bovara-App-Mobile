@@ -18,12 +18,15 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/services/ml_service.dart';
 import '../../../../core/theme/theme.dart';
+import '../../data/models/cattle_model.dart';
 import '../../data/models/heat_event_model.dart';
+import '../../data/services/cattle_service.dart';
 import '../../data/services/heat_event_service.dart';
 
 class CattleZealPage extends StatefulWidget {
   final String cattleId;
-  const CattleZealPage({super.key, required this.cattleId});
+  final CattleModel? cattle;
+  const CattleZealPage({super.key, required this.cattleId, this.cattle});
 
   @override
   State<CattleZealPage> createState() => _CattleZealPageState();
@@ -31,20 +34,26 @@ class CattleZealPage extends StatefulWidget {
 
 class _CattleZealPageState extends State<CattleZealPage> {
   final _service = HeatEventService();
+  final _cattleService = CattleService();
   final _ml = MlService();
 
-  // Estado del formulario
-  bool _inmovilidad = true;
-  int _vecesMontada = 2;
-  int _intentosMonta = 1;
-  String _secrecion = 'cristalina'; // ninguna | cristalina | turbia | sangre
-  String _hinchazon = 'leve'; // normal | leve | alta
-  String _actividad = 'alta'; // baja | normal | alta | muy_alta
+  CattleModel? _cattle;
+
+  // Estado del formulario — TODO empieza limpio/sin seleccionar, para
+  // que el usuario decida cada valor. Antes venia con opciones
+  // preseleccionadas (como si ya se hubiera observado a la vaca sin
+  // que el usuario tocara nada).
+  bool _inmovilidad = false;
+  int _vecesMontada = 0;
+  int _intentosMonta = 0;
+  String _secrecion = 'ninguna'; // ninguna | cristalina | turbia | sangre
+  String _hinchazon = 'normal'; // normal | leve | alta
+  String _actividad = 'normal'; // baja | normal | alta | muy_alta
   final _social = <String, bool>{
-    'mugidos': true,
+    'mugidos': false,
     'nerviosismo': false,
-    'monta_otras': true,
-    'inquietud': true,
+    'monta_otras': false,
+    'inquietud': false,
     'olfatea': false,
     'lame': false,
   };
@@ -52,6 +61,18 @@ class _CattleZealPageState extends State<CattleZealPage> {
   bool _saving = false;
   bool _saved = false;
   bool _analyzing = false;
+  int? _lastAnalyzedProbability; // el % que se muestra en el modal de analisis
+
+  @override
+  void initState() {
+    super.initState();
+    _cattle = widget.cattle;
+    if (_cattle == null) {
+      _cattleService.getCattleById(widget.cattleId).then((c) {
+        if (mounted) setState(() => _cattle = c);
+      }).catchError((_) {});
+    }
+  }
 
   // Cálculo de probabilidad (heurística ponderada)
   int get _probability {
@@ -185,6 +206,7 @@ class _CattleZealPageState extends State<CattleZealPage> {
 
     if (!mounted) return;
     if (error != null || result == null) {
+      _lastAnalyzedProbability = _probability;
       // Fallback: usa cálculo local si el ml-service falla, con banner de aviso
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -203,7 +225,6 @@ class _CattleZealPageState extends State<CattleZealPage> {
           window: _probWindow,
           reasons: _probReasons,
           source: 'fallback_local',
-          onAdjust: () => Navigator.pop(ctx),
           onConfirm: () async {
             Navigator.pop(ctx);
             await _save();
@@ -215,6 +236,7 @@ class _CattleZealPageState extends State<CattleZealPage> {
 
     // Convertir el resultado remoto al formato del modal
     final r = result;
+    _lastAnalyzedProbability = r.probability;
     final remoteColor = _colorFor(r.probability);
     await showModalBottomSheet<void>(
       context: context,
@@ -227,7 +249,6 @@ class _CattleZealPageState extends State<CattleZealPage> {
         window: r.window,
         reasons: r.reasons.map(_reasonFromApi).toList(),
         source: r.source,
-        onAdjust: () => Navigator.pop(ctx),
         onConfirm: () async {
           Navigator.pop(ctx);
           await _save();
@@ -270,6 +291,7 @@ class _CattleZealPageState extends State<CattleZealPage> {
         vaginalDischarge: _secrecion,
         vulvaSwelling: _hinchazon,
         comportamiento: _buildBehaviorSummary(),
+        probability: _lastAnalyzedProbability ?? _probability,
         wasInseminated: false,
       );
       await _service.createHeatEvent(model);
@@ -307,7 +329,7 @@ class _CattleZealPageState extends State<CattleZealPage> {
   void _resetForm() {
     setState(() {
       _saved = false;
-      _inmovilidad = true;
+      _inmovilidad = false;
       _vecesMontada = 0;
       _intentosMonta = 0;
       _secrecion = 'ninguna';
@@ -332,7 +354,7 @@ class _CattleZealPageState extends State<CattleZealPage> {
               children: [
                 _FieldLabel(text: 'Animal'),
                 const SizedBox(height: 8),
-                _AnimalCard(cattleId: widget.cattleId),
+                _AnimalCard(cattle: _cattle),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -571,13 +593,15 @@ class _StaticFieldBox extends StatelessWidget {
 }
 
 class _AnimalCard extends StatelessWidget {
-  final String cattleId;
-  const _AnimalCard({required this.cattleId});
+  final CattleModel? cattle;
+  const _AnimalCard({required this.cattle});
 
   @override
   Widget build(BuildContext context) {
-    // Corto los primeros 3 chars del UUID como "arete"
-    final tag = cattleId.replaceAll('-', '').substring(0, 3).toUpperCase();
+    final c = cattle;
+    final initials = c == null
+        ? '…'
+        : (c.name.trim().isEmpty ? '?' : c.name.trim()[0].toUpperCase());
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -596,7 +620,7 @@ class _AnimalCard extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
-            child: Text(tag,
+            child: Text(initials,
                 style: BovaraText.label(size: 13, color: BovaraColors.celoSoftText)
                     .copyWith(fontWeight: FontWeight.w800)),
           ),
@@ -605,11 +629,11 @@ class _AnimalCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Vaca seleccionada',
+                Text(c?.name ?? 'Cargando…',
                     style: BovaraText.body(size: 14, color: BovaraColors.textPrimary)
                         .copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 1),
-                Text('ID: $tag…',
+                Text(c != null ? 'Lote: ${c.lote}' : '',
                     style: BovaraText.label(size: 12, color: BovaraColors.textMuted)),
               ],
             ),
@@ -1179,7 +1203,6 @@ class _AnalysisModal extends StatelessWidget {
   final String window;
   final List<_Reason> reasons;
   final String source;
-  final VoidCallback onAdjust;
   final VoidCallback onConfirm;
 
   const _AnalysisModal({
@@ -1189,7 +1212,6 @@ class _AnalysisModal extends StatelessWidget {
     required this.window,
     required this.reasons,
     required this.source,
-    required this.onAdjust,
     required this.onConfirm,
   });
 
@@ -1278,58 +1300,35 @@ class _AnalysisModal extends StatelessWidget {
                     child: _ReasonCard(reason: r),
                   )),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onAdjust,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: BovaraColors.border, width: 1.5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onConfirm,
+                borderRadius: BorderRadius.circular(15),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment(-0.3, -1),
+                      end: Alignment(0.5, 1),
+                      colors: [Color(0xFFE0559B), BovaraColors.celo],
                     ),
-                    child: Text('Ajustar datos',
-                        style: BovaraText.label(size: 14, color: BovaraColors.textPrimary)
-                            .copyWith(fontWeight: FontWeight.w800)),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 3,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: onConfirm,
-                      borderRadius: BorderRadius.circular(15),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment(-0.3, -1),
-                            end: Alignment(0.5, 1),
-                            colors: [Color(0xFFE0559B), BovaraColors.celo],
-                          ),
-                          borderRadius: BorderRadius.circular(15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: BovaraColors.celo.withValues(alpha: 0.55),
-                              blurRadius: 22,
-                              offset: const Offset(0, 10),
-                              spreadRadius: -8,
-                            ),
-                          ],
-                        ),
-                        alignment: Alignment.center,
-                        child: Text('Confirmar y guardar',
-                            style: BovaraText.label(size: 14, color: Colors.white)
-                                .copyWith(fontWeight: FontWeight.w800)),
+                    borderRadius: BorderRadius.circular(15),
+                    boxShadow: [
+                      BoxShadow(
+                        color: BovaraColors.celo.withValues(alpha: 0.55),
+                        blurRadius: 22,
+                        offset: const Offset(0, 10),
+                        spreadRadius: -8,
                       ),
-                    ),
+                    ],
                   ),
+                  alignment: Alignment.center,
+                  child: Text('Confirmar y guardar',
+                      style: BovaraText.label(size: 14, color: Colors.white)
+                          .copyWith(fontWeight: FontWeight.w800)),
                 ),
-              ],
+              ),
             ),
           ],
         ),

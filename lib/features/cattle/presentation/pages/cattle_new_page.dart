@@ -3,7 +3,9 @@
 // Nueva vaca (Grupo E · Nueva vaca del rediseño).
 // - Header con back + título + hint "Se guarda offline · 2 minutos".
 // - Slot de foto + botones "Tomar foto" / "Galería" (placeholders).
-// - Campos: arete, nombre, lote, peso, sexo (segmented), nacimiento, raza.
+// - Campos: lote, nombre, partos, peso, sexo (segmented), nacimiento, raza.
+// - Soporta modo edicion: si se pasa existingCattle, pre-llena el form
+//   y guarda con PUT en vez de POST.
 // - Footer con botón "Guardar animal" + indicador de sync.
 
 import 'dart:io';
@@ -20,7 +22,8 @@ import '../../data/models/cattle_model.dart';
 import '../../data/services/cattle_service.dart';
 
 class CattleNewPage extends StatefulWidget {
-  const CattleNewPage({super.key});
+  final CattleModel? existingCattle;
+  const CattleNewPage({super.key, this.existingCattle});
 
   @override
   State<CattleNewPage> createState() => _CattleNewPageState();
@@ -32,27 +35,94 @@ class _CattleNewPageState extends State<CattleNewPage> {
   final _cloudinary = CloudinaryService();
   final _picker = ImagePicker();
 
-  final _loteCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
+  final _numPartosCtrl = TextEditingController();
 
   String _gender = 'female';
   String _breed = 'Holstein';
+  String? _lote; // corral por letra: A, B, C... G
   DateTime? _birthDate;
   bool _saving = false;
   File? _photoFile;
+  String? _existingPhotoUrl;
   bool _uploadingPhoto = false;
+
+  bool get _isEdit => widget.existingCattle != null;
 
   static const _breeds = [
     'Holstein', 'Jersey', 'Cebú', 'Angus', 'Brahmán', 'Simmental', 'Otro',
   ];
+  static const _lotes = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+
+  @override
+  void initState() {
+    super.initState();
+    final c = widget.existingCattle;
+    if (c != null) {
+      _lote = c.lote;
+      _nameCtrl.text = c.name;
+      _weightCtrl.text = c.weight != null ? c.weight!.toStringAsFixed(0) : '';
+      _numPartosCtrl.text = '${c.numPartos}';
+      _gender = c.gender;
+      _breed = c.breed;
+      _birthDate = c.birthDate;
+      _existingPhotoUrl = c.photoUrl;
+    }
+  }
 
   @override
   void dispose() {
-    _loteCtrl.dispose();
     _nameCtrl.dispose();
     _weightCtrl.dispose();
+    _numPartosCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickLote() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: BovaraColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: BovaraColors.border,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                children: [
+                  Text('Lote (corral)',
+                      style: BovaraText.heading(color: BovaraColors.textPrimary)),
+                ],
+              ),
+            ),
+            for (final l in _lotes)
+              ListTile(
+                title: Text('Lote $l',
+                    style: BovaraText.body(size: 15, color: BovaraColors.textPrimary)),
+                trailing: l == _lote
+                    ? const Icon(Icons.check, color: BovaraColors.primary)
+                    : null,
+                onTap: () => Navigator.pop(ctx, l),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (choice != null) setState(() => _lote = choice);
   }
 
   Future<void> _pickBirthDate() async {
@@ -142,12 +212,18 @@ class _CattleNewPageState extends State<CattleNewPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_lote == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Elige el lote (corral) del animal')),
+      );
+      return;
+    }
     HapticFeedback.selectionClick();
     setState(() => _saving = true);
     try {
-      // Sube la foto primero (si hay). Si falla, no aborta el registro:
-      // el animal se crea sin foto y el usuario puede reintentar.
-      String? photoUrl;
+      // Sube la foto SOLO si el usuario eligió una nueva. Si esta
+      // editando y no toco la foto, se conserva la que ya tenia.
+      String? photoUrl = _existingPhotoUrl;
       if (_photoFile != null) {
         setState(() => _uploadingPhoto = true);
         try {
@@ -156,7 +232,7 @@ class _CattleNewPageState extends State<CattleNewPage> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Foto no subida ($e). Se guarda sin foto.'),
+                content: Text('Foto no subida ($e). Se guarda sin foto nueva.'),
                 backgroundColor: BovaraColors.warning,
               ),
             );
@@ -166,24 +242,42 @@ class _CattleNewPageState extends State<CattleNewPage> {
         }
       }
 
-      final now = DateTime.now();
-      final model = CattleModel(
-        id: '',
-        name: _nameCtrl.text.trim().isEmpty ? 'Sin nombre' : _nameCtrl.text.trim(),
-        lote: _loteCtrl.text.trim(),
-        breed: _breed,
-        gender: _gender,
-        birthDate: _birthDate,
-        weight: double.tryParse(_weightCtrl.text.trim()),
-        photoUrl: photoUrl,
-        createdAt: now,
-        updatedAt: now,
-      );
-      await _service.createCattle(model);
+      final numPartos = int.tryParse(_numPartosCtrl.text.trim()) ?? 0;
+
+      if (_isEdit) {
+        await _service.updateCattle(widget.existingCattle!.id, {
+          'name': _nameCtrl.text.trim().isEmpty ? 'Sin nombre' : _nameCtrl.text.trim(),
+          'lote': _lote,
+          'breed': _breed,
+          'gender': _gender,
+          if (_birthDate != null)
+            'birth_date': _birthDate!.toIso8601String().split('T')[0],
+          if (double.tryParse(_weightCtrl.text.trim()) != null)
+            'weight': double.tryParse(_weightCtrl.text.trim()),
+          'num_partos': numPartos,
+          if (photoUrl != null) 'photo_url': photoUrl,
+        });
+      } else {
+        final now = DateTime.now();
+        final model = CattleModel(
+          id: '',
+          name: _nameCtrl.text.trim().isEmpty ? 'Sin nombre' : _nameCtrl.text.trim(),
+          lote: _lote!,
+          breed: _breed,
+          gender: _gender,
+          birthDate: _birthDate,
+          weight: double.tryParse(_weightCtrl.text.trim()),
+          numPartos: numPartos,
+          photoUrl: photoUrl,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await _service.createCattle(model);
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Animal registrado'),
+        SnackBar(
+          content: Text(_isEdit ? 'Animal actualizado' : 'Animal registrado'),
           backgroundColor: BovaraColors.primary,
         ),
       );
@@ -210,26 +304,33 @@ class _CattleNewPageState extends State<CattleNewPage> {
           key: _formKey,
           child: Column(
             children: [
-              _Header(onBack: () => context.pop()),
+              _Header(onBack: () => context.pop(), isEdit: _isEdit),
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(26, 4, 26, 20),
                   children: [
                     _PhotoSlot(
                       photoFile: _photoFile,
+                      existingUrl: _existingPhotoUrl,
                       uploading: _uploadingPhoto,
                       onCamera: () => _pickPhoto(ImageSource.camera),
                       onGallery: () => _pickPhoto(ImageSource.gallery),
-                      onRemove: () => setState(() => _photoFile = null),
+                      onRemove: () => setState(() {
+                        _photoFile = null;
+                        _existingPhotoUrl = null;
+                      }),
                     ),
                     const SizedBox(height: 18),
-                    _FieldLabel(label: 'Número de arete', required_: true),
-                    _MonoField(
-                      controller: _loteCtrl,
-                      hint: 'Ej: 406',
-                      validator: (v) => (v == null || v.trim().isEmpty)
-                          ? 'Requerido'
-                          : null,
+                    _FieldLabel(label: 'Lote (corral)', required_: true),
+                    InkWell(
+                      onTap: _pickLote,
+                      borderRadius: BorderRadius.circular(14),
+                      child: _StaticField(
+                        text: _lote != null ? 'Lote $_lote' : 'Elegir…',
+                        placeholder: _lote == null,
+                        trailing: const Icon(Icons.keyboard_arrow_down,
+                            size: 18, color: BovaraColors.textMuted),
+                      ),
                     ),
                     const SizedBox(height: 15),
                     _FieldLabel(label: 'Nombre', optional: true),
@@ -244,13 +345,11 @@ class _CattleNewPageState extends State<CattleNewPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _FieldLabel(label: 'Lote'),
+                              _FieldLabel(label: 'Partos', optional: true),
                               _TextField(
-                                controller: TextEditingController(text: 'A'),
-                                hint: 'A',
-                                enabled: false,
-                                trailing: const Icon(Icons.keyboard_arrow_down,
-                                    size: 18, color: BovaraColors.textMuted),
+                                controller: _numPartosCtrl,
+                                hint: '0',
+                                keyboardType: TextInputType.number,
                               ),
                             ],
                           ),
@@ -347,7 +446,8 @@ class _CattleNewPageState extends State<CattleNewPage> {
 
 class _Header extends StatelessWidget {
   final VoidCallback onBack;
-  const _Header({required this.onBack});
+  final bool isEdit;
+  const _Header({required this.onBack, this.isEdit = false});
 
   @override
   Widget build(BuildContext context) {
@@ -378,15 +478,17 @@ class _Header extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Nueva vaca',
+                Text(isEdit ? 'Editar vaca' : 'Nueva vaca',
                     style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -0.2,
                     )),
                 const SizedBox(height: 2),
-                Text('Se guarda offline · 2 minutos',
-                    style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
+                Text(
+                  isEdit ? 'Actualiza los datos de este animal' : 'Se guarda offline · 2 minutos',
+                  style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted),
+                ),
               ],
             ),
           ),
@@ -398,6 +500,7 @@ class _Header extends StatelessWidget {
 
 class _PhotoSlot extends StatelessWidget {
   final File? photoFile;
+  final String? existingUrl;
   final bool uploading;
   final VoidCallback onCamera;
   final VoidCallback onGallery;
@@ -405,6 +508,7 @@ class _PhotoSlot extends StatelessWidget {
 
   const _PhotoSlot({
     required this.photoFile,
+    this.existingUrl,
     required this.uploading,
     required this.onCamera,
     required this.onGallery,
@@ -413,6 +517,7 @@ class _PhotoSlot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasPhoto = photoFile != null || (existingUrl != null && existingUrl!.isNotEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -429,6 +534,8 @@ class _PhotoSlot extends StatelessWidget {
             children: [
               if (photoFile != null)
                 Image.file(photoFile!, fit: BoxFit.cover)
+              else if (existingUrl != null && existingUrl!.isNotEmpty)
+                Image.network(existingUrl!, fit: BoxFit.cover)
               else
                 Center(
                   child: Column(
@@ -448,7 +555,7 @@ class _PhotoSlot extends StatelessWidget {
                     ],
                   ),
                 ),
-              if (photoFile != null)
+              if (hasPhoto)
                 Positioned(
                   top: 8,
                   right: 8,
@@ -505,7 +612,7 @@ class _PhotoSlot extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'La foto ayuda a identificar al animal en campo y a resolver duplicados de arete.',
+          'La foto ayuda a identificar al animal en campo, sobre todo si lo registraste por chat con Bovi.',
           style: BovaraText.body(size: 11.5, color: BovaraColors.textDisabled)
               .copyWith(height: 1.4, fontWeight: FontWeight.w500),
         ),

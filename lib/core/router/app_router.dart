@@ -70,11 +70,13 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/cattle/new',
-      builder: (context, state) => const CattleNewPage(),
+      builder: (context, state) =>
+          CattleNewPage(existingCattle: state.extra as CattleModel?),
     ),
     GoRoute(
       path: '/assistant',
-      builder: (context, state) => const AssistantChatPage(),
+      builder: (context, state) =>
+          AssistantChatPage(autoSendMessage: state.extra as String?),
     ),
     GoRoute(
       path: '/notifications',
@@ -98,7 +100,7 @@ final appRouter = GoRouter(
       name: 'cattle-zeal',
       builder: (context, state) {
         final cattleId = state.pathParameters['id']!;
-        return CattleZealPage(cattleId: cattleId);
+        return CattleZealPage(cattleId: cattleId, cattle: state.extra as CattleModel?);
       },
     ),
 

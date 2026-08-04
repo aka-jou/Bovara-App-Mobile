@@ -140,26 +140,28 @@ class _RemindersPageState extends State<RemindersPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: BovaraColors.surfaceAlt,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _Header(
-              summary: _summary,
-              onBack: () => context.go('/home'),
-              onAdd: _showNewReminderSheet,
-            ),
-            _Segmented(
-              current: _current,
-              hoyCount: _hoy.length,
-              proxCount: _proximas.length,
-              vencCount: _vencidas.length,
-              onSelect: (t) => setState(() => _current = t),
-            ),
-            Expanded(
-              child: _buildBody(),
-            ),
-          ],
-        ),
+      body: Column(
+        children: [
+          _Header(
+            summary: _summary,
+            onBack: () => context.go('/home'),
+          ),
+          _Segmented(
+            current: _current,
+            hoyCount: _hoy.length,
+            proxCount: _proximas.length,
+            vencCount: _vencidas.length,
+            onSelect: (t) => setState(() => _current = t),
+          ),
+          Expanded(
+            child: _buildBody(),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showNewReminderSheet,
+        backgroundColor: BovaraColors.primary,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
@@ -238,85 +240,63 @@ class _RemindersPageState extends State<RemindersPage> {
 class _Header extends StatelessWidget {
   final String summary;
   final VoidCallback onBack;
-  final VoidCallback onAdd;
 
   const _Header({
     required this.summary,
     required this.onBack,
-    required this.onAdd,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 10, 22, 4),
-      child: Row(
-        children: [
-          Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              onTap: onBack,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  border: Border.all(color: BovaraColors.border, width: 1.5),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [BovaraColors.primary, Color(0xFF1B5C2C)],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 10, 22, 18),
+          child: Row(
+            children: [
+              Material(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: onBack,
                   borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.arrow_back_ios_new,
-                    size: 14, color: BovaraColors.textPrimary),
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Tareas',
-                    style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.23,
-                    )),
-                const SizedBox(height: 2),
-                Text(summary,
-                    style: BovaraText.label(size: 12.5, color: BovaraColors.textMuted)),
-              ],
-            ),
-          ),
-          // Botón +
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onAdd,
-              borderRadius: BorderRadius.circular(13),
-              child: Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment(-0.3, -1),
-                    end: Alignment(0.5, 1),
-                    colors: [Color(0xFF3DA35D), BovaraColors.primary],
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.arrow_back_ios_new,
+                        size: 14, color: Colors.white),
                   ),
-                  borderRadius: BorderRadius.circular(13),
-                  boxShadow: [
-                    BoxShadow(
-                      color: BovaraColors.primary.withValues(alpha: 0.55),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                      spreadRadius: -8,
-                    ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Tareas',
+                        style: BovaraText.title(color: Colors.white).copyWith(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        )),
+                    const SizedBox(height: 2),
+                    Text(summary,
+                        style: BovaraText.label(size: 12.5, color: Colors.white.withValues(alpha: 0.8))),
                   ],
                 ),
-                child: const Icon(Icons.add, color: Colors.white, size: 20),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

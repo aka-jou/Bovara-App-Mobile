@@ -83,74 +83,21 @@ class _SplashLogo extends StatelessWidget {
       width: 84,
       height: 84,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: BovaraColors.primaryGradient,
-        ),
-        borderRadius: BorderRadius.circular(26),
+        color: Colors.white,
+        shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: BovaraColors.primaryDeep.withValues(alpha: 0.55),
+            color: BovaraColors.primaryDeep.withValues(alpha: 0.4),
             blurRadius: 40,
             offset: const Offset(0, 20),
             spreadRadius: -14,
           ),
         ],
       ),
-      child: Center(
-        child: SizedBox(
-          width: 48,
-          height: 36,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4EDE0),
-                    borderRadius: BorderRadius.circular(80),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 12,
-                top: 11,
-                child: Container(
-                  width: 5,
-                  height: 5,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 12,
-                top: 11,
-                child: Container(
-                  width: 5,
-                  height: 5,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 2,
-                left: 14,
-                child: Container(
-                  width: 20,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE9B7A6),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      padding: const EdgeInsets.all(6),
+      child: Image.asset(
+        'assets/images/bovara_logo.png',
+        fit: BoxFit.contain,
       ),
     );
   }

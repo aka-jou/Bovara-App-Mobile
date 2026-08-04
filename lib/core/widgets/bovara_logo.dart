@@ -49,31 +49,20 @@ class BovaraLogo extends StatelessWidget {
   }
 }
 
-/// El "sello" cuadrado del logo — cuadrado con gradient + cabeza abstracta.
+/// El "sello" del logo — la imagen real de Bovara.
 class _BovaraLogoMark extends StatelessWidget {
   final double size;
   const _BovaraLogoMark({required this.size});
 
   @override
   Widget build(BuildContext context) {
-    // proporciones tomadas del prototipo (círculos de la cabeza)
-    final headW = size * 0.55;
-    final headH = size * 0.4;
-    final eye = size * 0.062;
-    final muzzleW = size * 0.25;
-    final muzzleH = size * 0.15;
-
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: BovaraColors.primaryGradient,
-        ),
-        borderRadius: BorderRadius.circular(size * 0.3),
-        boxShadow: const [
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
           BoxShadow(
             color: Color(0x99176B34),
             blurRadius: 18,
@@ -82,63 +71,10 @@ class _BovaraLogoMark extends StatelessWidget {
           ),
         ],
       ),
-      child: Center(
-        child: SizedBox(
-          width: headW,
-          height: headH,
-          child: Stack(
-            children: [
-              // Cara (elipse crema)
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4EDE0),
-                    borderRadius: BorderRadius.circular(size),
-                  ),
-                ),
-              ),
-              // Ojo izquierdo
-              Positioned(
-                left: headW * 0.22,
-                top: headH * 0.28,
-                child: Container(
-                  width: eye,
-                  height: eye,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              // Ojo derecho
-              Positioned(
-                right: headW * 0.22,
-                top: headH * 0.28,
-                child: Container(
-                  width: eye,
-                  height: eye,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2B2018),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              // Hocico (rosa)
-              Positioned(
-                bottom: 0,
-                left: (headW - muzzleW) / 2,
-                child: Container(
-                  width: muzzleW,
-                  height: muzzleH,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE9B7A6),
-                    borderRadius: BorderRadius.circular(size),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      padding: EdgeInsets.all(size * 0.06),
+      child: Image.asset(
+        'assets/images/bovara_logo.png',
+        fit: BoxFit.contain,
       ),
     );
   }

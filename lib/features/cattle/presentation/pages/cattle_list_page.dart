@@ -440,7 +440,7 @@ class _CattleCard extends StatelessWidget {
                       textBaseline: TextBaseline.alphabetic,
                       children: [
                         Text(
-                          '#${_shortId(cattle.id)}',
+                          cattle.arete,
                           style: BovaraText.title(color: BovaraColors.textPrimary).copyWith(
                             fontSize: 17,
                             fontWeight: FontWeight.w800,
@@ -484,15 +484,10 @@ class _CattleCard extends StatelessWidget {
     );
   }
 
-  String _shortId(String id) {
-    // Muestra los primeros 3 chars del UUID para tener un "arete corto"
-    return id.replaceAll('-', '').substring(0, 3).toUpperCase();
-  }
-
   String _metaFor(CattleModel c) {
-    final parts = <String>[c.lote];
-    if (c.weight != null) parts.add('${c.weight!.toStringAsFixed(0)} kg');
+    final parts = <String>[c.breed];
     if (c.age != null) parts.add('${c.age} ${c.age == 1 ? 'año' : 'años'}');
+    parts.add(c.gender.toLowerCase() == 'female' ? 'Hembra' : 'Macho');
     return parts.join(' · ');
   }
 

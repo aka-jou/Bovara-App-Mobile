@@ -28,7 +28,8 @@ import '../../../../core/theme/theme.dart';
 import '../../data/services/assistant_service.dart';
 
 class AssistantChatPage extends StatefulWidget {
-  const AssistantChatPage({super.key});
+  final String? autoSendMessage;
+  const AssistantChatPage({super.key, this.autoSendMessage});
 
   @override
   State<AssistantChatPage> createState() => _AssistantChatPageState();
@@ -61,6 +62,11 @@ class _AssistantChatPageState extends State<AssistantChatPage> {
       text: '¡Hola! Soy Bovi. Puedes preguntarme por celos, vacunas, pesos o tareas del día. ¿En qué te ayudo?',
     ));
     _initSpeech();
+    if (widget.autoSendMessage != null && widget.autoSendMessage!.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _sendMessage(widget.autoSendMessage!);
+      });
+    }
   }
 
   Future<void> _initSpeech() async {
